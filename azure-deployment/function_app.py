@@ -477,15 +477,36 @@ def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
         headers={"Content-Type": "application/json"}
     )
 
-@app.route(route="api/admin/sessions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def list_all_sessions(req: func.HttpRequest) -> func.HttpResponse:
-    """Admin endpoint to see all verification sessions"""
+@app.route(route="api/users", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def list_users(req: func.HttpRequest) -> func.HttpResponse:
+    """List all registered users"""
+    users_summary = []
+    
+    for user_id, credentials in credentials_db.items():
+        users_summary.append({
+            "user_id": user_id,
+            "credentials_count": len(credentials),
+            "first_registration": "stored in memory - demo only"
+        })
+    
+    return func.HttpResponse(
+        json.dumps({
+            "total_users": len(users_summary),
+            "users": users_summary,
+            "note": "Demo system - data stored in memory only"
+        }),
+        headers={"Content-Type": "application/json"}
+    )
+
+@app.route(route="api/sessions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def list_sessions(req: func.HttpRequest) -> func.HttpResponse:
+    """List all verification sessions"""
     sessions_summary = []
     
     for token, session in sessions_db.items():
         sessions_summary.append({
-            "token": token[:10] + "...",  # Truncate for security
             "user_id": session["user_id"],
+            "token": token[:20] + "...",  # Truncate for security
             "verified": session["verified"],
             "expires_at": session["expires_at"].isoformat()
         })
@@ -493,11 +514,15 @@ def list_all_sessions(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({
             "total_sessions": len(sessions_summary),
-            "sessions": sessions_summary,
-            "credentials_count": len(credentials_db)
+            "sessions": sessions_summary
         }),
         headers={"Content-Type": "application/json"}
     )
+
+@app.route(route="api/admin/sessions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def list_all_sessions(req: func.HttpRequest) -> func.HttpResponse:
+    """Admin endpoint to see all verification sessions (legacy)"""
+    return list_sessions(req)
 
 @app.route(route="api/webauthn/options", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
