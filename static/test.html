@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAuthn Verification API Tester</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e1e1;
+            border-radius: 8px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        .success {
+            background: #f0fdf4;
+            border: 2px solid #86efac;
+            color: #166534;
+        }
+        
+        .error {
+            background: #fef2f2;
+            border: 2px solid #fca5a5;
+            color: #dc2626;
+        }
+        
+        .info {
+            background: #f0f9ff;
+            border: 2px solid #7dd3fc;
+            color: #0369a1;
+        }
+        
+        .url-display {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #e9ecef;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        
+        .copy-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+            font-size: 14px;
+        }
+        
+        .qr-section {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        #qrcode {
+            margin: 20px 0;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 WebAuthn API Tester</h1>
+        <p class="subtitle">Test verification links and check results directly in your browser</p>
+        
+        <div class="form-group">
+            <label for="environment">Environment:</label>
+            <select id="environment">
+                <option value="https://webauthn-investor.azurewebsites.net">Azure Production</option>
+                <option value="http://localhost:8000">Local Development</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="userId">User ID:</label>
+            <input type="text" id="userId" placeholder="investor123" value="test_user_1">
+        </div>
+        
+        <div class="form-group">
+            <label for="username">Username/Email:</label>
+            <input type="text" id="username" placeholder="investor@example.com" value="test@example.com">
+        </div>
+        
+        <button class="button" onclick="createVerificationLink()">
+            🔗 Create Verification Link
+        </button>
+        
+        <div id="linkResult" style="display: none;">
+            <h3>📧 Verification Link Created:</h3>
+            <div class="url-display">
+                <strong>URL:</strong> <span id="verificationUrl"></span>
+                <button class="copy-btn" onclick="copyUrl()">📋 Copy</button>
+            </div>
+            
+            <div class="url-display">
+                <strong>Token:</strong> <span id="verificationToken"></span>
+                <button class="copy-btn" onclick="copyToken()">📋 Copy</button>
+            </div>
+            
+            <div class="qr-section">
+                <h4>📱 QR Code for Mobile Testing:</h4>
+                <div id="qrcode"></div>
+                <p><em>Scan with your phone camera to open the verification page</em></p>
+            </div>
+            
+            <button class="button" onclick="checkStatus()">
+                📊 Check Verification Status
+            </button>
+            
+            <button class="button" onclick="startMonitoring()" id="monitorBtn">
+                ⏰ Start Real-time Monitoring
+            </button>
+        </div>
+        
+        <div id="result"></div>
+        
+        <div id="monitoringResult" style="display: none;">
+            <h3>🔄 Real-time Monitoring:</h3>
+            <div id="monitorStatus"></div>
+            <button class="button" onclick="stopMonitoring()" id="stopBtn" style="background: #dc3545;">
+                ⏹️ Stop Monitoring
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let currentToken = null;
+        let monitoringInterval = null;
+        
+        function getBaseUrl() {
+            return document.getElementById('environment').value;
+        }
+        
+        async function createVerificationLink() {
+            const userId = document.getElementById('userId').value;
+            const username = document.getElementById('username').value;
+            const baseUrl = getBaseUrl();
+            
+            if (!userId || !username) {
+                showResult('Please fill in both User ID and Username', 'error');
+                return;
+            }
+            
+            try {
+                showResult('Creating verification link...', 'info');
+                
+                const url = `${baseUrl}/api/verification/link?user_id=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentToken = data.token;
+                    
+                    document.getElementById('verificationUrl').textContent = data.verification_url;
+                    document.getElementById('verificationToken').textContent = data.token;
+                    document.getElementById('linkResult').style.display = 'block';
+                    
+                    // Generate QR code
+                    const qrDiv = document.getElementById('qrcode');
+                    qrDiv.innerHTML = '';
+                    QRCode.toCanvas(qrDiv, data.verification_url, {
+                        width: 256,
+                        margin: 2,
+                        color: {
+                            dark: '#000000',
+                            light: '#FFFFFF'
+                        }
+                    });
+                    
+                    showResult(`✅ Verification link created successfully!
+                    
+Expires in: ${data.expires_in} seconds
+Registration required: ${data.registration_required || false}
+
+Next steps:
+1. 📱 Open the URL on your phone or scan the QR code
+2. 👆 Complete biometric verification
+3. 📊 Check status below`, 'success');
+                } else {
+                    showResult(`❌ Error: ${data.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Network Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function checkStatus() {
+            if (!currentToken) {
+                showResult('❌ No verification link created yet', 'error');
+                return;
+            }
+            
+            const baseUrl = getBaseUrl();
+            
+            try {
+                const url = `${baseUrl}/api/verification/status?token=${currentToken}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const verified = data.verified;
+                    const status = verified ? '✅ VERIFIED' : '⏳ PENDING';
+                    
+                    showResult(`📊 Verification Status: ${status}
+
+User ID: ${data.user_id}
+Verified: ${data.verified}
+Expires at: ${data.expires_at}
+Token: ${data.token.substring(0, 20)}...
+
+${verified ? '🎉 Success! Biometric verification completed!' : '⏰ Waiting for user to complete verification on their device.'}`, verified ? 'success' : 'info');
+                } else {
+                    showResult(`❌ Status Check Error: ${data.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Network Error: ${error.message}`, 'error');
+            }
+        }
+        
+        function startMonitoring() {
+            if (!currentToken) {
+                showResult('❌ No verification link created yet', 'error');
+                return;
+            }
+            
+            if (monitoringInterval) {
+                stopMonitoring();
+            }
+            
+            document.getElementById('monitoringResult').style.display = 'block';
+            document.getElementById('monitorBtn').disabled = true;
+            
+            let checkCount = 0;
+            monitoringInterval = setInterval(async () => {
+                checkCount++;
+                const baseUrl = getBaseUrl();
+                
+                try {
+                    const url = `${baseUrl}/api/verification/status?token=${currentToken}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        const status = data.verified ? '✅ VERIFIED' : '⏳ PENDING';
+                        const timestamp = new Date().toLocaleTimeString();
+                        
+                        document.getElementById('monitorStatus').innerHTML = 
+                            `Check ${checkCount}: ${status} (${timestamp})
+                            
+User: ${data.user_id}
+Verified: ${data.verified}`;
+                        
+                        if (data.verified) {
+                            stopMonitoring();
+                            showResult('🎉 SUCCESS! Verification completed!', 'success');
+                        }
+                    } else {
+                        document.getElementById('monitorStatus').innerHTML = 
+                            `Check ${checkCount}: ❌ Error - ${data.error}`;
+                    }
+                } catch (error) {
+                    document.getElementById('monitorStatus').innerHTML = 
+                        `Check ${checkCount}: ❌ Network Error - ${error.message}`;
+                }
+            }, 3000); // Check every 3 seconds
+        }
+        
+        function stopMonitoring() {
+            if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+                monitoringInterval = null;
+            }
+            document.getElementById('monitoringResult').style.display = 'none';
+            document.getElementById('monitorBtn').disabled = false;
+        }
+        
+        function copyUrl() {
+            const url = document.getElementById('verificationUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                alert('📋 URL copied to clipboard!');
+            });
+        }
+        
+        function copyToken() {
+            const token = document.getElementById('verificationToken').textContent;
+            navigator.clipboard.writeText(token).then(() => {
+                alert('📋 Token copied to clipboard!');
+            });
+        }
+        
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+        }
+        
+        // Auto-generate test user ID with timestamp
+        window.onload = function() {
+            const timestamp = Math.floor(Date.now() / 1000);
+            document.getElementById('userId').value = `test_user_${timestamp}`;
+        };
+    </script>
+</body>
+</html>

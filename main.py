@@ -169,10 +169,18 @@ async def root():
 
 @app.post("/api/verification/link")
 async def create_verification_link(request: VerificationLinkRequest):
-    token = generate_jwt_token(request.user_id)
+    return await _create_verification_link(request.user_id, request.username)
+
+@app.get("/api/verification/link")
+async def create_verification_link_get(user_id: str, username: str):
+    """Browser-friendly GET version for testing"""
+    return await _create_verification_link(user_id, username)
+
+async def _create_verification_link(user_id: str, username: str):
+    token = generate_jwt_token(user_id)
     
     # Check if user already has credentials
-    credentials = get_user_credentials(request.user_id)
+    credentials = get_user_credentials(user_id)
     
     if credentials:
         # Existing user - generate authentication challenge
@@ -185,7 +193,7 @@ async def create_verification_link(request: VerificationLinkRequest):
             user_verification=UserVerificationRequirement.REQUIRED
         )
         
-        create_session(request.user_id, token, base64.b64encode(options.challenge).decode())
+        create_session(user_id, token, base64.b64encode(options.challenge).decode())
         
         return {
             "verification_url": f"{ORIGIN}/static/index.html?token={token}",
@@ -197,15 +205,15 @@ async def create_verification_link(request: VerificationLinkRequest):
         options = generate_registration_options(
             rp_id=RP_ID,
             rp_name="Investor Verification",
-            user_id=request.user_id.encode(),
-            user_name=request.username,
-            user_display_name=request.username,
+            user_id=user_id.encode(),
+            user_name=username,
+            user_display_name=username,
             authenticator_selection=AuthenticatorSelectionCriteria(
                 user_verification=UserVerificationRequirement.REQUIRED
             )
         )
         
-        create_session(request.user_id, token, base64.b64encode(options.challenge).decode())
+        create_session(user_id, token, base64.b64encode(options.challenge).decode())
         
         return {
             "verification_url": f"{ORIGIN}/static/index.html?token={token}",
