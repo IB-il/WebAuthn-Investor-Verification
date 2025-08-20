@@ -80,12 +80,17 @@ def mark_session_verified(token: str):
     if token in sessions_db:
         sessions_db[token]["verified"] = True
 
-@app.route(route="api/verification/link", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="api/verification/link", methods=["POST", "GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        req_body = req.get_json()
-        user_id = req_body.get('user_id')
-        username = req_body.get('username')
+        # Support both GET and POST methods
+        if req.method == "GET":
+            user_id = req.params.get('user_id')
+            username = req.params.get('username')
+        else:
+            req_body = req.get_json()
+            user_id = req_body.get('user_id')
+            username = req_body.get('username')
         
         if not user_id or not username:
             return func.HttpResponse(
