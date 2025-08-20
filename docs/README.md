@@ -31,6 +31,15 @@ This directory contains comprehensive documentation for the WebAuthn Investor Ve
 - Development workflow commands
 - Mobile testing utilities
 
+### 🔄 [Workflow Guide](WORKFLOW_GUIDE.md)
+**Step-by-step verification process**
+- Complete investor verification workflow
+- Exact commands and API calls
+- Real-time monitoring scripts
+- Integration examples (Python, JavaScript)
+- Error handling and troubleshooting
+- Mobile testing and QR codes
+
 ## 🚀 Quick Links
 
 - **Live Demo**: https://webauthn-investor.azurewebsites.net
@@ -44,6 +53,7 @@ This directory contains comprehensive documentation for the WebAuthn Investor Ve
 | User Guide | 1.0 | 2025-01-20 | ✅ Complete |
 | Developer Guide | 1.0 | 2025-01-20 | ✅ Complete |
 | Command Reference | 1.0 | 2025-01-20 | ✅ Complete |
+| Workflow Guide | 1.0 | 2025-01-20 | ✅ Complete |
 
 ## 🔄 Updates & Maintenance
 
