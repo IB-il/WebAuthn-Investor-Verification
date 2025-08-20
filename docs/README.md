@@ -22,6 +22,15 @@ This directory contains comprehensive documentation for the WebAuthn Investor Ve
 - Testing and monitoring
 - Production deployment checklist
 
+### ⚡ [Command Reference](COMMANDS.md)
+**Quick reference for all commands**
+- Setup and deployment commands
+- API testing with curl examples
+- Azure management commands
+- Monitoring and troubleshooting
+- Development workflow commands
+- Mobile testing utilities
+
 ## 🚀 Quick Links
 
 - **Live Demo**: https://webauthn-investor.azurewebsites.net
@@ -34,6 +43,7 @@ This directory contains comprehensive documentation for the WebAuthn Investor Ve
 |----------|---------|--------------|---------|
 | User Guide | 1.0 | 2025-01-20 | ✅ Complete |
 | Developer Guide | 1.0 | 2025-01-20 | ✅ Complete |
+| Command Reference | 1.0 | 2025-01-20 | ✅ Complete |
 
 ## 🔄 Updates & Maintenance
 
