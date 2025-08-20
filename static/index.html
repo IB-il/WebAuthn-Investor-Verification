@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investor Verification</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .status {
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+        
+        .status.loading {
+            background: #f0f9ff;
+            color: #0369a1;
+            border: 2px solid #e0f2fe;
+        }
+        
+        .status.success {
+            background: #f0fdf4;
+            color: #166534;
+            border: 2px solid #dcfce7;
+        }
+        
+        .status.error {
+            background: #fef2f2;
+            color: #dc2626;
+            border: 2px solid #fecaca;
+        }
+        
+        .verify-button {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s;
+        }
+        
+        .verify-button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .verify-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .fingerprint {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">$</div>
+        <h1>Investor Verification</h1>
+        <p class="subtitle">Secure biometric verification for your account</p>
+        
+        <div id="status" class="status loading">
+            <div class="spinner"></div>
+            Initializing verification...
+        </div>
+        
+        <div class="fingerprint">🔒</div>
+        
+        <button id="verifyBtn" class="verify-button" disabled>
+            Verify Identity
+        </button>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        
+        const statusDiv = document.getElementById('status');
+        const verifyBtn = document.getElementById('verifyBtn');
+        
+        if (!token) {
+            showError('Invalid verification link');
+            throw new Error('No token provided');
+        }
+        
+        let verificationOptions = null;
+        let verificationType = null;
+        
+        function showStatus(message, type = 'loading') {
+            statusDiv.className = `status ${type}`;
+            if (type === 'loading') {
+                statusDiv.innerHTML = `<div class="spinner"></div>${message}`;
+            } else {
+                statusDiv.textContent = message;
+            }
+        }
+        
+        function showError(message) {
+            showStatus(message, 'error');
+            verifyBtn.disabled = true;
+        }
+        
+        function showSuccess(message) {
+            showStatus(message, 'success');
+            verifyBtn.textContent = '✓ Verified';
+            verifyBtn.disabled = true;
+            document.querySelector('.fingerprint').textContent = '✅';
+        }
+        
+        async function loadVerificationOptions() {
+            try {
+                const response = await fetch(`/api/verification/options?token=${token}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to load verification options');
+                }
+                
+                if (data.verified) {
+                    showSuccess('Already verified!');
+                    return;
+                }
+                
+                verificationOptions = data.options;
+                verificationType = data.type;
+                
+                verifyBtn.disabled = false;
+                
+                if (verificationType === 'registration') {
+                    showStatus('Ready to register your biometric', 'loading');
+                    verifyBtn.textContent = 'Register Biometric';
+                    document.querySelector('.fingerprint').textContent = '👆';
+                } else {
+                    showStatus('Ready to verify your identity', 'loading');
+                    verifyBtn.textContent = 'Verify Identity';
+                    document.querySelector('.fingerprint').textContent = '🔐';
+                }
+                
+            } catch (error) {
+                console.error('Error loading options:', error);
+                showError(error.message);
+            }
+        }
+        
+        function base64urlToUint8Array(base64url) {
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+            const paddedBase64 = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=');
+            const binaryString = atob(paddedBase64);
+            return new Uint8Array(binaryString.length).map((_, i) => binaryString.charCodeAt(i));
+        }
+        
+        function uint8ArrayToBase64url(array) {
+            return btoa(String.fromCharCode(...array))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=/g, '');
+        }
+        
+        async function performVerification() {
+            try {
+                showStatus('Please complete biometric verification on your device...', 'loading');
+                verifyBtn.disabled = true;
+                
+                let credential;
+                
+                if (verificationType === 'registration') {
+                    // Registration flow
+                    const createOptions = {
+                        ...verificationOptions,
+                        challenge: base64urlToUint8Array(verificationOptions.challenge),
+                        user: {
+                            ...verificationOptions.user,
+                            id: base64urlToUint8Array(verificationOptions.user.id)
+                        }
+                    };
+                    
+                    credential = await navigator.credentials.create({
+                        publicKey: createOptions
+                    });
+                    
+                } else {
+                    // Authentication flow
+                    const getOptions = {
+                        ...verificationOptions,
+                        challenge: base64urlToUint8Array(verificationOptions.challenge),
+                        allowCredentials: verificationOptions.allowCredentials.map(cred => ({
+                            ...cred,
+                            id: base64urlToUint8Array(cred.id)
+                        }))
+                    };
+                    
+                    credential = await navigator.credentials.get({
+                        publicKey: getOptions
+                    });
+                }
+                
+                if (!credential) {
+                    throw new Error('Verification was cancelled');
+                }
+                
+                // Prepare credential for server
+                const credentialPayload = {
+                    id: credential.id,
+                    rawId: uint8ArrayToBase64url(new Uint8Array(credential.rawId)),
+                    type: credential.type,
+                    response: {}
+                };
+                
+                if (verificationType === 'registration') {
+                    credentialPayload.response = {
+                        clientDataJSON: uint8ArrayToBase64url(new Uint8Array(credential.response.clientDataJSON)),
+                        attestationObject: uint8ArrayToBase64url(new Uint8Array(credential.response.attestationObject))
+                    };
+                    
+                    const registerResponse = await fetch(`/api/verification/register?token=${token}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ credential: credentialPayload })
+                    });
+                    
+                    const result = await registerResponse.json();
+                    
+                    if (result.verified) {
+                        showSuccess('Registration successful! You are now verified.');
+                    } else {
+                        throw new Error(result.message || 'Registration failed');
+                    }
+                    
+                } else {
+                    credentialPayload.response = {
+                        clientDataJSON: uint8ArrayToBase64url(new Uint8Array(credential.response.clientDataJSON)),
+                        authenticatorData: uint8ArrayToBase64url(new Uint8Array(credential.response.authenticatorData)),
+                        signature: uint8ArrayToBase64url(new Uint8Array(credential.response.signature)),
+                        userHandle: credential.response.userHandle ? uint8ArrayToBase64url(new Uint8Array(credential.response.userHandle)) : null
+                    };
+                    
+                    const authResponse = await fetch(`/api/verification/authenticate?token=${token}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ credential: credentialPayload })
+                    });
+                    
+                    const result = await authResponse.json();
+                    
+                    if (result.verified) {
+                        showSuccess('Authentication successful! You are verified.');
+                    } else {
+                        throw new Error(result.message || 'Authentication failed');
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Verification error:', error);
+                showError(error.message || 'Verification failed');
+                verifyBtn.disabled = false;
+            }
+        }
+        
+        verifyBtn.addEventListener('click', performVerification);
+        
+        // Check WebAuthn support
+        if (!window.PublicKeyCredential) {
+            showError('WebAuthn is not supported on this device');
+        } else {
+            loadVerificationOptions();
+        }
+        
+        // Auto-refresh status every 5 seconds to handle external changes
+        setInterval(async () => {
+            if (statusDiv.className.includes('success')) return;
+            
+            try {
+                const response = await fetch(`/api/verification/status?token=${token}`);
+                const data = await response.json();
+                
+                if (data.verified && !statusDiv.className.includes('success')) {
+                    showSuccess('Verification completed!');
+                }
+            } catch (error) {
+                // Ignore status check errors
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
