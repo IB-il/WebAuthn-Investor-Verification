@@ -19,6 +19,7 @@ from webauthn.helpers.structs import (
     AuthenticatorAttestationResponse,
     AuthenticatorAssertionResponse
 )
+from azure.data.tables import TableServiceClient
 
 # Configuration
 RP_ID = os.getenv("RP_ID", "webauthn-investor.azurewebsites.net")
@@ -30,8 +31,25 @@ JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
 # SECURITY FIX: Admin API authentication
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin_" + os.urandom(32).hex())
 
-# File-based storage for Azure Functions persistence
-import os
+# Azure Table Storage configuration
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+TABLE_CREDENTIALS = "credentials"
+TABLE_SESSIONS = "sessions"
+
+# Initialize Azure Table Storage
+table_service_client = None
+if AZURE_STORAGE_CONNECTION_STRING:
+    try:
+        table_service_client = TableServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+        # Create tables if they don't exist
+        table_service_client.create_table_if_not_exists(TABLE_CREDENTIALS)
+        table_service_client.create_table_if_not_exists(TABLE_SESSIONS)
+        logging.info("Azure Table Storage initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize Azure Table Storage: {str(e)}")
+        table_service_client = None
+
+# Fallback to file-based storage for local development
 import tempfile
 import json as json_module
 from pathlib import Path
@@ -44,23 +62,76 @@ SESSIONS_FILE = STORAGE_DIR / "sessions.json"
 # Ensure storage directory exists
 STORAGE_DIR.mkdir(exist_ok=True)
 
+# Azure Table Storage functions
 def load_credentials():
+    if table_service_client:
+        try:
+            table_client = table_service_client.get_table_client(TABLE_CREDENTIALS)
+            entities = table_client.list_entities()
+            data = {}
+            for entity in entities:
+                data[entity['RowKey']] = {
+                    'credential_id': entity.get('credential_id', ''),
+                    'public_key': entity.get('public_key', '')
+                }
+            return data
+        except Exception as e:
+            logging.error(f"Error loading credentials from Azure Table Storage: {str(e)}")
+    
+    # Fallback to file storage
     try:
         if CREDENTIALS_FILE.exists():
             with open(CREDENTIALS_FILE, 'r') as f:
                 return json_module.load(f)
     except Exception as e:
-        logging.error(f"Error loading credentials: {str(e)}")
+        logging.error(f"Error loading credentials from file: {str(e)}")
     return {}
 
 def save_credentials(data):
+    if table_service_client:
+        try:
+            table_client = table_service_client.get_table_client(TABLE_CREDENTIALS)
+            for user_id, cred_data in data.items():
+                entity = {
+                    'PartitionKey': 'credentials',
+                    'RowKey': user_id,
+                    'credential_id': cred_data.get('credential_id', ''),
+                    'public_key': cred_data.get('public_key', '')
+                }
+                table_client.upsert_entity(entity)
+            return
+        except Exception as e:
+            logging.error(f"Error saving credentials to Azure Table Storage: {str(e)}")
+    
+    # Fallback to file storage
     try:
         with open(CREDENTIALS_FILE, 'w') as f:
             json_module.dump(data, f)
     except Exception as e:
-        logging.error(f"Error saving credentials: {str(e)}")
+        logging.error(f"Error saving credentials to file: {str(e)}")
 
 def load_sessions():
+    if table_service_client:
+        try:
+            table_client = table_service_client.get_table_client(TABLE_SESSIONS)
+            entities = table_client.list_entities()
+            data = {}
+            for entity in entities:
+                # Convert string timestamp back to datetime
+                expires_at_str = entity.get('expires_at', '')
+                expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
+                
+                data[entity['RowKey']] = {
+                    'user_id': entity.get('user_id', ''),
+                    'challenge': entity.get('challenge', ''),
+                    'verified': entity.get('verified', False),
+                    'expires_at': expires_at
+                }
+            return data
+        except Exception as e:
+            logging.error(f"Error loading sessions from Azure Table Storage: {str(e)}")
+    
+    # Fallback to file storage
     try:
         if SESSIONS_FILE.exists():
             with open(SESSIONS_FILE, 'r') as f:
@@ -71,10 +142,33 @@ def load_sessions():
                         session['expires_at'] = datetime.fromisoformat(session['expires_at'])
                 return data
     except Exception as e:
-        logging.error(f"Error loading sessions: {str(e)}")
+        logging.error(f"Error loading sessions from file: {str(e)}")
     return {}
 
 def save_sessions(data):
+    if table_service_client:
+        try:
+            table_client = table_service_client.get_table_client(TABLE_SESSIONS)
+            for token, session_data in data.items():
+                # Convert datetime to string for storage
+                expires_at_str = ''
+                if 'expires_at' in session_data and session_data['expires_at']:
+                    expires_at_str = session_data['expires_at'].isoformat()
+                
+                entity = {
+                    'PartitionKey': 'sessions',
+                    'RowKey': token,
+                    'user_id': session_data.get('user_id', ''),
+                    'challenge': session_data.get('challenge', ''),
+                    'verified': session_data.get('verified', False),
+                    'expires_at': expires_at_str
+                }
+                table_client.upsert_entity(entity)
+            return
+        except Exception as e:
+            logging.error(f"Error saving sessions to Azure Table Storage: {str(e)}")
+    
+    # Fallback to file storage
     try:
         # Convert datetime objects to strings for JSON serialization
         serializable_data = {}
@@ -87,7 +181,7 @@ def save_sessions(data):
         with open(SESSIONS_FILE, 'w') as f:
             json_module.dump(serializable_data, f)
     except Exception as e:
-        logging.error(f"Error saving sessions: {str(e)}")
+        logging.error(f"Error saving sessions to file: {str(e)}")
 
 # Load initial data
 credentials_db = load_credentials()
