@@ -163,15 +163,15 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
     if not user_id:
         return func.HttpResponse("Invalid or expired token", status_code=401)
     
-    # Return professional HTML page inspired by Inter.co design
+    # Return Interactive Israel styled page with Hebrew support
     html_content = f'''
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Investor Verification - WebAuthn</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>אימות משקיע מאובטח - אינטרקטיב ישראל</title>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {{
             margin: 0;
@@ -180,12 +180,13 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
         }}
         
         body {{
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: #ffffff;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             line-height: 1.6;
+            direction: rtl;
         }}
         
         /* Header with logo */
@@ -210,28 +211,19 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
         .company-logo {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 16px;
         }}
         
-        .logo-icon {{
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, #303e90 0%, #db1222 100%);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 24px;
-            font-weight: 700;
-            box-shadow: 0 4px 12px rgba(48, 62, 144, 0.2);
+        .logo-img {{
+            height: 60px;
+            width: auto;
         }}
         
         .company-name {{
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 700;
             color: #303e90;
-            letter-spacing: -0.5px;
+            font-family: 'Assistant', sans-serif;
         }}
         
         .security-badge {{
@@ -268,32 +260,36 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
         }}
         
         .verification-icon {{
-            width: 80px;
-            height: 80px;
             margin: 0 auto 24px;
-            background: linear-gradient(135deg, #303e90 0%, #db1222 100%);
-            border-radius: 50%;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #303e90 0%, #4f46e5 100%);
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 36px;
+            font-size: 18px;
+            font-weight: 600;
             box-shadow: 0 8px 24px rgba(48, 62, 144, 0.2);
+            font-family: 'Assistant', sans-serif;
+            width: fit-content;
         }}
         
         .main-heading {{
-            font-size: 32px;
+            font-size: 50px;
             font-weight: 700;
-            color: #1f2937;
-            margin-bottom: 12px;
-            letter-spacing: -0.5px;
+            color: #303e90;
+            margin-bottom: 16px;
+            font-family: 'Assistant', sans-serif;
+            text-align: center;
         }}
         
         .subheading {{
-            font-size: 18px;
-            color: #6b7280;
+            font-size: 19px;
+            color: #555;
             margin-bottom: 32px;
             font-weight: 400;
+            text-align: center;
         }}
         
         .status-container {{
@@ -362,19 +358,19 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
         }}
         
         .verify-button {{
-            background: linear-gradient(135deg, #303e90 0%, #db1222 100%);
+            background: #303e90;
             color: white;
             border: none;
-            padding: 18px 32px;
-            border-radius: 8px;
-            font-size: 18px;
+            padding: 20px 40px;
+            border-radius: 5px;
+            font-size: 19px;
             font-weight: 600;
             cursor: pointer;
             width: 100%;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(48, 62, 144, 0.2);
+            box-shadow: 0 2px 8px rgba(48, 62, 144, 0.2);
             position: relative;
-            overflow: hidden;
+            font-family: 'Assistant', sans-serif;
         }}
         
         .verify-button:hover:not(:disabled) {{
@@ -455,25 +451,25 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
     <header class="header">
         <div class="header-content">
             <div class="company-logo">
-                <div class="logo-icon">IV</div>
-                <div class="company-name">InvestorVerify</div>
+                <img src="https://www.inter-il.com/wp-content/uploads/2025/03/Screenshot-2025-03-26-161501.png" 
+                     alt="אינטרקטיב ישראל לוגו" class="logo-img">
             </div>
             <div class="security-badge">
-                🔒 Bank-Level Security
+                🔒 אבטחה ברמה בנקאית
             </div>
         </div>
     </header>
     
     <main class="main-container">
         <div class="verification-card">
-            <div class="verification-icon">🛡️</div>
+            <div class="verification-icon">אינטרקטיב ישראל</div>
             
-            <h1 class="main-heading">Identity Verification</h1>
-            <p class="subheading">Secure your investment account with biometric authentication</p>
+            <h1 class="main-heading">אימות זהות</h1>
+            <p class="subheading">אבטח את חשבון ההשקעות שלך באמצעות אימות ביומטרי</p>
             
             <div id="status" class="status-container">
-                <div class="status-text">Ready to verify your identity</div>
-                <div class="status-subtitle">Use your device's biometric authentication</div>
+                <div class="status-text">מוכן לאימות הזהות שלך</div>
+                <div class="status-subtitle">השתמש באימות הביומטרי של המכשיר שלך</div>
             </div>
             
             <div class="biometric-icons">
@@ -483,15 +479,15 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
             </div>
             
             <button id="verifyBtn" class="verify-button" onclick="startVerification()">
-                Verify My Identity
+                אמת את הזהות שלי
             </button>
             
             <div class="security-notice">
-                <h4>Your Security & Privacy</h4>
+                <h4>האבטחה והפרטיות שלך</h4>
                 <ul class="security-points">
-                    <li>Your biometric data never leaves your device</li>
-                    <li>Bank-grade encryption protects all communications</li>
-                    <li>Verification completes in seconds, not minutes</li>
+                    <li>הנתונים הביומטריים שלך לא יוצאים מהמכשיר שלך</li>
+                    <li>הצפנה ברמה בנקאית מגנה על כל התקשורת</li>
+                    <li>האימות מסתיים תוך שניות, לא דקות</li>
                 </ul>
             </div>
         </div>
@@ -528,11 +524,11 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
             }});
         }}
         
-        function showSuccess(message, subtitle = 'Verification completed successfully') {{
+        function showSuccess(message, subtitle = 'האימות הושלם בהצלחה') {{
             showStatus(message, subtitle, 'success');
             
             const button = document.getElementById('verifyBtn');
-            button.innerHTML = '✓ Identity Verified';
+            button.innerHTML = '✓ הזהות אומתה';
             button.disabled = true;
             
             // Celebrate with all icons active
@@ -541,25 +537,25 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
             }});
         }}
         
-        function showError(message, subtitle = 'Please try again') {{
+        function showError(message, subtitle = 'אנא נסה שוב') {{
             showStatus(message, subtitle, 'error');
             document.getElementById('verifyBtn').disabled = false;
         }}
         
         async function startVerification() {{
             if (!window.PublicKeyCredential) {{
-                showError('WebAuthn not supported', 'This device does not support biometric authentication');
+                showError('אימות ביומטרי לא נתמך', 'המכשיר הזה לא תומך באימות ביומטרי');
                 return;
             }}
             
-            showStatus('Preparing biometric verification...', 'Connecting to secure server');
+            showStatus('מכין אימות ביומטרי...', 'מתחבר לשרת מאובטח');
             document.getElementById('verifyBtn').disabled = true;
             
             try {{
                 // Get WebAuthn options from server
                 const optionsResponse = await fetch(`/api/webauthn/options?token={token}`);
                 if (!optionsResponse.ok) {{
-                    throw new Error('Server connection failed');
+                    throw new Error('החיבור לשרת נכשל');
                 }}
                 
                 const options = await optionsResponse.json();
@@ -598,7 +594,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                         attestation: options.attestation || 'none'
                     }};
                     
-                    showStatus('Complete biometric authentication', 'Touch your fingerprint sensor or use Face ID', 'info');
+                    showStatus('השלם אימות ביומטרי', 'גע בחיישן טביעת האצבע או השתמש ב-Face ID', 'info');
                     const credential = await navigator.credentials.create({{
                         publicKey: publicKeyCredentialCreationOptions
                     }});
@@ -622,7 +618,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     }});
                     
                     if (registrationResponse.ok) {{
-                        showSuccess('Identity Verified Successfully!', 'Your biometric credential has been registered');
+                        showSuccess('הזהות אומתה בהצלחה!', 'הרישום הביומטרי שלך נרשם בהצלחה');
                         // Update server that verification is complete
                         await fetch(`/api/verification/complete`, {{
                             method: 'POST',
@@ -630,7 +626,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                             body: JSON.stringify({{ token: token }})
                         }});
                     }} else {{
-                        throw new Error('Credential registration failed');
+                        throw new Error('רישום הרישום הביומטרי נכשל');
                     }}
                 }} else {{
                     // Authentication for existing user
@@ -644,7 +640,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                         timeout: 60000
                     }};
                     
-                    showStatus('Authenticate with biometric', 'Use your registered fingerprint or Face ID', 'info');
+                    showStatus('אמת בביומטריה', 'השתמש בטביעת האצבע הרשומה או ב-Face ID', 'info');
                     const credential = await navigator.credentials.get({{
                         publicKey: publicKeyCredentialRequestOptions
                     }});
@@ -670,7 +666,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     }});
                     
                     if (authResponse.ok) {{
-                        showSuccess('Welcome Back!', 'Authentication completed successfully');
+                        showSuccess('ברוך השב!', 'האימות הושלם בהצלחה');
                         // Update server that verification is complete
                         await fetch(`/api/verification/complete`, {{
                             method: 'POST',
@@ -678,25 +674,25 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                             body: JSON.stringify({{ token: token }})
                         }});
                     }} else {{
-                        throw new Error('Authentication verification failed');
+                        throw new Error('אימות הזהות נכשל');
                     }}
                 }}
                 
             }} catch (error) {{
                 console.error('WebAuthn error:', error);
                 if (error.name === 'NotAllowedError') {{
-                    showError('Verification cancelled', 'You cancelled the biometric authentication');
+                    showError('האימות בוטל', 'ביטלת את האימות הביומטרי');
                 }} else if (error.name === 'InvalidStateError') {{
-                    showError('Device not ready', 'Please ensure biometric authentication is enabled');
+                    showError('המכשיר לא מוכן', 'אנא וודא שהאימות הביומטרי מופעל');
                 }} else {{
-                    showError('Verification failed', error.message);
+                    showError('האימות נכשל', error.message);
                 }}
                 document.getElementById('verifyBtn').disabled = false;
             }}
         }}
         
         // Initialize
-        showStatus('Ready to verify your identity', 'Tap the button below to start');
+        showStatus('מוכן לאימות הזהות שלך', 'הקש על הכפתור למטה כדי להתחיל');
     </script>
 </body>
 </html>

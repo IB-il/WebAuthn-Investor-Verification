@@ -436,6 +436,60 @@ async def authenticate_credential(token: str, response: AuthenticationResponse):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Authentication error: {str(e)}")
 
+@app.get("/api/users")
+async def list_users():
+    """List all registered users"""
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT user_id, username, COUNT(credential_id) as credentials_count, 
+               MIN(created_at) as first_registration
+        FROM user_credentials 
+        GROUP BY user_id, username
+        ORDER BY first_registration DESC
+    """)
+    users = cursor.fetchall()
+    conn.close()
+    
+    return {
+        "total_users": len(users),
+        "users": [
+            {
+                "user_id": user[0],
+                "username": user[1], 
+                "credentials_count": user[2],
+                "first_registration": user[3]
+            } for user in users
+        ]
+    }
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all verification sessions"""
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT user_id, token, verified, created_at, expires_at
+        FROM verification_sessions 
+        ORDER BY created_at DESC
+        LIMIT 50
+    """)
+    sessions = cursor.fetchall()
+    conn.close()
+    
+    return {
+        "total_sessions": len(sessions),
+        "sessions": [
+            {
+                "user_id": session[0],
+                "token": session[1][:20] + "...",  # Truncate for security
+                "verified": bool(session[2]),
+                "created_at": session[3],
+                "expires_at": session[4]
+            } for session in sessions
+        ]
+    }
+
 @app.get("/api/verification/status")
 async def check_verification_status(token: str):
     user_id = verify_jwt_token(token)
