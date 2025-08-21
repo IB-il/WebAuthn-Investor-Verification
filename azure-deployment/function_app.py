@@ -4,6 +4,7 @@ import json
 import jwt
 import base64
 import os
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -22,12 +23,19 @@ from webauthn.helpers.structs import (
 # Configuration
 RP_ID = os.getenv("RP_ID", "webauthn-investor.azurewebsites.net")
 ORIGIN = os.getenv("ORIGIN", "https://webauthn-investor.azurewebsites.net")
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-super-secret")
+# SECURITY FIX: Use cryptographically secure JWT secret
+JWT_SECRET = os.getenv("JWT_SECRET", "+UEP1oRln/CaVnO6V4rt9I4rqiaDPN/3yB2tv+VOH/weBDGMj2goWvhlO/Ao6HtEqiViTu1P1XuUpENFD7Ujlg==")
 JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
+
+# SECURITY FIX: Admin API authentication
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin_" + os.urandom(32).hex())
 
 # In-memory storage (use Azure Table Storage or CosmosDB for production)
 credentials_db = {}
 sessions_db = {}
+
+# SECURITY FIX: Rate limiting storage
+rate_limit_db = {}  # IP -> {count, reset_time}
 
 app = func.FunctionApp()
 
@@ -61,6 +69,15 @@ def save_credential(user_id: str, credential_id: str, public_key: str):
         credentials_db[user_id] = []
     credentials_db[user_id].append((credential_id, public_key, 0))
 
+def update_sign_count(credential_id: str, new_sign_count: int):
+    """Update sign count for credential (prevents replay attacks)"""
+    for user_id, credentials in credentials_db.items():
+        for i, (cred_id, public_key, old_count) in enumerate(credentials):
+            if cred_id == credential_id:
+                credentials_db[user_id][i] = (cred_id, public_key, new_sign_count)
+                return
+    logging.warning(f"Credential {credential_id} not found for sign count update")
+
 def create_session(user_id: str, token: str, challenge: str):
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=JWT_TTL_SECONDS)
     sessions_db[token] = {
@@ -80,9 +97,111 @@ def mark_session_verified(token: str):
     if token in sessions_db:
         sessions_db[token]["verified"] = True
 
+def verify_admin_auth(req: func.HttpRequest) -> bool:
+    """SECURITY FIX: Verify admin API key authentication"""
+    auth_header = req.headers.get('Authorization')
+    if not auth_header:
+        return False
+    
+    if not auth_header.startswith('Bearer '):
+        return False
+        
+    api_key = auth_header[7:]  # Remove 'Bearer ' prefix
+    return api_key == ADMIN_API_KEY
+
+def check_rate_limit(client_ip: str, max_requests: int = 10, window_minutes: int = 15) -> bool:
+    """SECURITY FIX: Rate limiting to prevent abuse"""
+    import time
+    
+    current_time = time.time()
+    window_start = current_time - (window_minutes * 60)
+    
+    if client_ip not in rate_limit_db:
+        rate_limit_db[client_ip] = {"count": 1, "reset_time": current_time + (window_minutes * 60)}
+        return True
+    
+    rate_data = rate_limit_db[client_ip]
+    
+    # Reset if window expired
+    if current_time > rate_data["reset_time"]:
+        rate_limit_db[client_ip] = {"count": 1, "reset_time": current_time + (window_minutes * 60)}
+        return True
+    
+    # Check if under limit
+    if rate_data["count"] < max_requests:
+        rate_limit_db[client_ip]["count"] += 1
+        return True
+    
+    return False  # Rate limited
+
+def validate_user_input(user_id: str, username: str) -> tuple[bool, str]:
+    """SECURITY FIX: Input validation and sanitization"""
+    import re
+    
+    if not user_id or not username:
+        return False, "user_id and username are required"
+    
+    if len(user_id) > 100 or len(username) > 100:
+        return False, "user_id and username must be under 100 characters"
+    
+    # Allow alphanumeric, underscores, hyphens, dots, @ for email
+    if not re.match(r'^[a-zA-Z0-9._@-]+$', user_id):
+        return False, "user_id contains invalid characters"
+        
+    if not re.match(r'^[a-zA-Z0-9._@\s-]+$', username):
+        return False, "username contains invalid characters"
+    
+    return True, ""
+
+def log_security_event(event_type: str, user_id: str = None, client_ip: str = None, details: str = None):
+    """SECURITY FIX: Enhanced security logging"""
+    timestamp = datetime.now(timezone.utc).isoformat()
+    
+    # Hash sensitive data for privacy
+    user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:8] if user_id else "unknown"
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:8] if client_ip else "unknown"
+    
+    log_entry = {
+        "timestamp": timestamp,
+        "event_type": event_type,
+        "user_hash": user_hash,
+        "ip_hash": ip_hash,
+        "details": details
+    }
+    
+    logging.warning(f"SECURITY_EVENT: {json.dumps(log_entry)}")
+
+def safe_error_response(error_message: str, status_code: int = 400) -> func.HttpResponse:
+    """SECURITY FIX: Sanitized error responses that don't leak information"""
+    # Map internal errors to safe user messages
+    safe_errors = {
+        "WebAuthn verification failed": "Biometric verification failed. Please try again.",
+        "Authentication verification failed": "Authentication failed. Please try again.",
+        "Session not found": "Session expired. Please start over.",
+        "Invalid token": "Session invalid or expired.",
+        "Credential not registered": "Device not recognized. Please register first."
+    }
+    
+    safe_message = safe_errors.get(error_message, "Verification failed. Please try again.")
+    
+    return func.HttpResponse(
+        json.dumps({"error": safe_message}),
+        status_code=status_code,
+        headers={"Content-Type": "application/json"}
+    )
+
 @app.route(route="api/verification/link", methods=["POST", "GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
     try:
+        # SECURITY FIX: Rate limiting
+        client_ip = req.headers.get('X-Forwarded-For', 'unknown').split(',')[0].strip()
+        if not check_rate_limit(client_ip, max_requests=5, window_minutes=15):
+            log_security_event("RATE_LIMIT_EXCEEDED", None, client_ip, "Too many verification requests")
+            return func.HttpResponse(
+                json.dumps({"error": "Rate limit exceeded - too many requests"}),
+                status_code=429,
+                headers={"Content-Type": "application/json"}
+            )
         # Support both GET and POST methods
         if req.method == "GET":
             user_id = req.params.get('user_id')
@@ -92,9 +211,12 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
             user_id = req_body.get('user_id')
             username = req_body.get('username')
         
-        if not user_id or not username:
+        # SECURITY FIX: Input validation
+        is_valid, validation_error = validate_user_input(user_id, username)
+        if not is_valid:
+            log_security_event("INVALID_INPUT", user_id, client_ip, validation_error)
             return func.HttpResponse(
-                json.dumps({"error": "user_id and username required"}),
+                json.dumps({"error": f"Invalid input: {validation_error}"}),
                 status_code=400,
                 headers={"Content-Type": "application/json"}
             )
@@ -113,6 +235,7 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
                 user_verification=UserVerificationRequirement.REQUIRED
             )
             create_session(user_id, token, base64.b64encode(options.challenge).decode())
+            log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "Existing user authentication")
             
             return func.HttpResponse(
                 json.dumps({
@@ -135,6 +258,7 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
                 )
             )
             create_session(user_id, token, base64.b64encode(options.challenge).decode())
+            log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "New user registration")
             
             return func.HttpResponse(
                 json.dumps({
@@ -146,12 +270,10 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
     except Exception as e:
+        log_security_event("VERIFICATION_LINK_ERROR", user_id if 'user_id' in locals() else None, 
+                          client_ip if 'client_ip' in locals() else None, str(e))
         logging.error(f"Error creating verification link: {str(e)}")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            status_code=500,
-            headers={"Content-Type": "application/json"}
-        )
+        return safe_error_response("Service temporarily unavailable", 500)
 
 @app.route(route="api/verify", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def verification_page(req: func.HttpRequest) -> func.HttpResponse:
@@ -743,7 +865,14 @@ def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/users", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def list_users(req: func.HttpRequest) -> func.HttpResponse:
-    """List all registered users"""
+    """List all registered users - SECURITY FIX: Requires authentication"""
+    # SECURITY FIX: Require admin authentication
+    if not verify_admin_auth(req):
+        return func.HttpResponse(
+            json.dumps({"error": "Unauthorized - Admin API key required"}),
+            status_code=401,
+            headers={"Content-Type": "application/json"}
+        )
     users_summary = []
     
     for user_id, credentials in credentials_db.items():
@@ -764,7 +893,14 @@ def list_users(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/sessions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def list_sessions(req: func.HttpRequest) -> func.HttpResponse:
-    """List all verification sessions"""
+    """List all verification sessions - SECURITY FIX: Requires authentication"""
+    # SECURITY FIX: Require admin authentication
+    if not verify_admin_auth(req):
+        return func.HttpResponse(
+            json.dumps({"error": "Unauthorized - Admin API key required"}),
+            status_code=401,
+            headers={"Content-Type": "application/json"}
+        )
     sessions_summary = []
     
     for token, session in sessions_db.items():
@@ -876,9 +1012,58 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        # Save credential (simplified - in production, verify the attestation)
-        credential_id = base64.b64encode(base64url_decode(credential_data['rawId'])).decode()
-        save_credential(user_id, credential_id, "dummy_public_key")
+        # REAL WebAuthn verification - SECURITY FIX
+        try:
+            # Get session challenge for verification
+            user_id_db, challenge_b64, verified, expires_at = get_session(token)
+            if not challenge_b64:
+                return func.HttpResponse(
+                    json.dumps({"error": "Session challenge not found"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Convert credential data to proper WebAuthn format
+            attestation_response = AuthenticatorAttestationResponse(
+                client_data_json=base64url_decode(credential_data["response"]["clientDataJSON"]),
+                attestation_object=base64url_decode(credential_data["response"]["attestationObject"])
+            )
+            
+            credential = RegistrationCredential(
+                id=credential_data["id"],
+                raw_id=base64url_decode(credential_data["rawId"]),
+                response=attestation_response,
+                type=credential_data["type"]
+            )
+            
+            # ACTUAL WebAuthn verification (not fake!)
+            verification = verify_registration_response(
+                credential=credential,
+                expected_challenge=base64.b64decode(challenge_b64),
+                expected_origin=ORIGIN,
+                expected_rp_id=RP_ID,
+                require_user_verification=True
+            )
+            
+            if not verification.verified:
+                return func.HttpResponse(
+                    json.dumps({"error": "WebAuthn verification failed"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Save REAL credential data
+            credential_id_b64 = base64.b64encode(verification.credential_id).decode()
+            public_key_b64 = base64.b64encode(verification.credential_public_key).decode()
+            save_credential(user_id, credential_id_b64, public_key_b64)
+            
+        except Exception as verification_error:
+            logging.error(f"WebAuthn verification failed: {str(verification_error)}")
+            return func.HttpResponse(
+                json.dumps({"error": f"Biometric verification failed: {str(verification_error)}"}),
+                status_code=400,
+                headers={"Content-Type": "application/json"}
+            )
         
         return func.HttpResponse(
             json.dumps({"success": True}),
@@ -908,11 +1093,92 @@ def webauthn_authenticate(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        # Simplified authentication - in production, verify the signature
-        return func.HttpResponse(
-            json.dumps({"success": True}),
-            headers={"Content-Type": "application/json"}
-        )
+        # REAL WebAuthn authentication - SECURITY FIX
+        try:
+            # Get session challenge and user credentials
+            session = get_session(token)
+            if not session:
+                return func.HttpResponse(
+                    json.dumps({"error": "Session not found"}),
+                    status_code=404,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            user_id_db, challenge_b64, verified, expires_at = session
+            credentials = get_user_credentials(user_id)
+            
+            if not credentials:
+                return func.HttpResponse(
+                    json.dumps({"error": "No registered credentials found"}),
+                    status_code=404,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Convert credential data to proper WebAuthn format
+            assertion_response = AuthenticatorAssertionResponse(
+                client_data_json=base64url_decode(credential_data["response"]["clientDataJSON"]),
+                authenticator_data=base64url_decode(credential_data["response"]["authenticatorData"]),
+                signature=base64url_decode(credential_data["response"]["signature"]),
+                user_handle=base64url_decode(credential_data["response"]["userHandle"]) if credential_data["response"].get("userHandle") else None
+            )
+            
+            credential = AuthenticationCredential(
+                id=credential_data["id"],
+                raw_id=base64url_decode(credential_data["rawId"]),
+                response=assertion_response,
+                type=credential_data["type"]
+            )
+            
+            # Find matching credential from database
+            credential_id_b64 = base64.b64encode(credential.raw_id).decode()
+            matching_cred = None
+            for cred in credentials:
+                if cred[0] == credential_id_b64:  # credential_id, public_key, sign_count
+                    matching_cred = cred
+                    break
+            
+            if not matching_cred:
+                return func.HttpResponse(
+                    json.dumps({"error": "Credential not registered for this user"}),
+                    status_code=404,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            _, public_key_b64, current_sign_count = matching_cred
+            
+            # ACTUAL WebAuthn authentication verification (not fake!)
+            verification = verify_authentication_response(
+                credential=credential,
+                expected_challenge=base64.b64decode(challenge_b64),
+                expected_origin=ORIGIN,
+                expected_rp_id=RP_ID,
+                credential_public_key=base64.b64decode(public_key_b64),
+                credential_current_sign_count=current_sign_count,
+                require_user_verification=True
+            )
+            
+            if not verification.verified:
+                return func.HttpResponse(
+                    json.dumps({"error": "Authentication verification failed"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Update sign count (prevents replay attacks)
+            update_sign_count(credential_id_b64, verification.new_sign_count)
+            
+            return func.HttpResponse(
+                json.dumps({"success": True, "verified": True}),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as auth_error:
+            logging.error(f"WebAuthn authentication failed: {str(auth_error)}")
+            return func.HttpResponse(
+                json.dumps({"error": f"Authentication failed: {str(auth_error)}"}),
+                status_code=400,
+                headers={"Content-Type": "application/json"}
+            )
         
     except Exception as e:
         logging.error(f"Authentication error: {str(e)}")
