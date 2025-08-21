@@ -30,9 +30,68 @@ JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
 # SECURITY FIX: Admin API authentication
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin_" + os.urandom(32).hex())
 
-# In-memory storage (use Azure Table Storage or CosmosDB for production)
-credentials_db = {}
-sessions_db = {}
+# File-based storage for Azure Functions persistence
+import os
+import tempfile
+import json as json_module
+from pathlib import Path
+
+# Storage paths
+STORAGE_DIR = Path(tempfile.gettempdir()) / "webauthn_storage"
+CREDENTIALS_FILE = STORAGE_DIR / "credentials.json"
+SESSIONS_FILE = STORAGE_DIR / "sessions.json"
+
+# Ensure storage directory exists
+STORAGE_DIR.mkdir(exist_ok=True)
+
+def load_credentials():
+    try:
+        if CREDENTIALS_FILE.exists():
+            with open(CREDENTIALS_FILE, 'r') as f:
+                return json_module.load(f)
+    except Exception as e:
+        logging.error(f"Error loading credentials: {str(e)}")
+    return {}
+
+def save_credentials(data):
+    try:
+        with open(CREDENTIALS_FILE, 'w') as f:
+            json_module.dump(data, f)
+    except Exception as e:
+        logging.error(f"Error saving credentials: {str(e)}")
+
+def load_sessions():
+    try:
+        if SESSIONS_FILE.exists():
+            with open(SESSIONS_FILE, 'r') as f:
+                data = json_module.load(f)
+                # Convert string timestamps back to datetime objects
+                for token, session in data.items():
+                    if 'expires_at' in session and isinstance(session['expires_at'], str):
+                        session['expires_at'] = datetime.fromisoformat(session['expires_at'])
+                return data
+    except Exception as e:
+        logging.error(f"Error loading sessions: {str(e)}")
+    return {}
+
+def save_sessions(data):
+    try:
+        # Convert datetime objects to strings for JSON serialization
+        serializable_data = {}
+        for token, session in data.items():
+            session_copy = session.copy()
+            if 'expires_at' in session_copy and hasattr(session_copy['expires_at'], 'isoformat'):
+                session_copy['expires_at'] = session_copy['expires_at'].isoformat()
+            serializable_data[token] = session_copy
+            
+        with open(SESSIONS_FILE, 'w') as f:
+            json_module.dump(serializable_data, f)
+    except Exception as e:
+        logging.error(f"Error saving sessions: {str(e)}")
+
+# Load initial data
+credentials_db = load_credentials()
+sessions_db = load_sessions()
 
 # SECURITY FIX: Rate limiting storage
 rate_limit_db = {}  # IP -> {count, reset_time}
@@ -68,6 +127,7 @@ def save_credential(user_id: str, credential_id: str, public_key: str):
     if user_id not in credentials_db:
         credentials_db[user_id] = []
     credentials_db[user_id].append((credential_id, public_key, 0))
+    save_credentials(credentials_db)
 
 def update_sign_count(credential_id: str, new_sign_count: int):
     """Update sign count for credential (prevents replay attacks)"""
@@ -75,6 +135,7 @@ def update_sign_count(credential_id: str, new_sign_count: int):
         for i, (cred_id, public_key, old_count) in enumerate(credentials):
             if cred_id == credential_id:
                 credentials_db[user_id][i] = (cred_id, public_key, new_sign_count)
+                save_credentials(credentials_db)
                 return
     logging.warning(f"Credential {credential_id} not found for sign count update")
 
@@ -86,6 +147,7 @@ def create_session(user_id: str, token: str, challenge: str):
         "verified": False,
         "expires_at": expires_at
     }
+    save_sessions(sessions_db)
 
 def get_session(token: str):
     session = sessions_db.get(token)
@@ -96,6 +158,7 @@ def get_session(token: str):
 def mark_session_verified(token: str):
     if token in sessions_db:
         sessions_db[token]["verified"] = True
+        save_sessions(sessions_db)
 
 def verify_admin_auth(req: func.HttpRequest) -> bool:
     """SECURITY FIX: Verify admin API key authentication"""
@@ -285,7 +348,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
     if not user_id:
         return func.HttpResponse("Invalid or expired token", status_code=401)
     
-    # Return Interactive Israel styled page with Hebrew support
+    # Return Interactive Israel styled page with Hebrew support and QR code
     html_content = f'''
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
@@ -544,6 +607,61 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
             font-size: 12px;
         }}
         
+        /* QR Code Section */
+        .qr-section {{
+            display: none;
+            text-align: center;
+            margin: 32px 0;
+            padding: 24px;
+            background: #f8fafc;
+            border-radius: 12px;
+            border: 2px solid #e5e7eb;
+        }}
+        
+        .qr-section.show {{
+            display: block;
+        }}
+        
+        .qr-title {{
+            font-size: 18px;
+            font-weight: 600;
+            color: #303e90;
+            margin-bottom: 16px;
+        }}
+        
+        #qrcode {{
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+        }}
+        
+        .qr-instructions {{
+            font-size: 14px;
+            color: #666;
+            margin-top: 16px;
+            line-height: 1.5;
+        }}
+
+        /* Desktop QR optimizations */
+        @media (min-width: 641px) {{
+            .qr-section {{
+                background: #ffffff;
+                border: 3px solid #303e90;
+                border-radius: 16px;
+                box-shadow: 0 8px 24px rgba(48, 62, 144, 0.15);
+            }}
+            
+            .qr-title {{
+                font-size: 24px;
+                margin-bottom: 24px;
+            }}
+            
+            #qrcode canvas {{
+                border-radius: 12px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            }}
+        }}
+        
         /* Mobile optimizations */
         @media (max-width: 640px) {{
             .header-content {{
@@ -565,6 +683,10 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
             
             .subheading {{
                 font-size: 16px;
+            }}
+            
+            .qr-section {{
+                display: none !important;
             }}
         }}
     </style>
@@ -598,6 +720,15 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                 <div class="biometric-icon">📱</div>
                 <div class="biometric-icon">👆</div>
                 <div class="biometric-icon">👤</div>
+            </div>
+            
+            <div class="qr-section" id="qrSection">
+                <div class="qr-title">פתח בטלפון הנייד</div>
+                <div id="qrcode"></div>
+                <div class="qr-instructions">
+                    השתמש בקישור למטה לפתיחה בטלפון הנייד<br>
+                    האימות יתבצע במכשיר הנייד עם Face ID או Touch ID
+                </div>
             </div>
             
             <button id="verifyBtn" class="verify-button" onclick="startVerification()">
@@ -670,12 +801,20 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                 return;
             }}
             
+            // Mobile-first: Check if running on mobile device
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            if (!isMobile) {{
+                // Desktop user - show mobile link
+                showMobileLink();
+                return;
+            }}
+            
             showStatus('מכין אימות ביומטרי...', 'מתחבר לשרת מאובטח');
             document.getElementById('verifyBtn').disabled = true;
             
             try {{
                 // Get WebAuthn options from server
-                const optionsResponse = await fetch(`/api/webauthn/options?token={token}`);
+                const optionsResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/options?token={token}`);
                 if (!optionsResponse.ok) {{
                     throw new Error('החיבור לשרת נכשל');
                 }}
@@ -722,7 +861,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     }});
                     
                     // Send registration result to server
-                    const registrationResponse = await fetch(`/api/webauthn/register`, {{
+                    const registrationResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/register`, {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
@@ -742,13 +881,15 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     if (registrationResponse.ok) {{
                         showSuccess('הזהות אומתה בהצלחה!', 'הרישום הביומטרי שלך נרשם בהצלחה');
                         // Update server that verification is complete
-                        await fetch(`/api/verification/complete`, {{
+                        await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {{
                             method: 'POST',
                             headers: {{ 'Content-Type': 'application/json' }},
                             body: JSON.stringify({{ token: token }})
                         }});
                     }} else {{
-                        throw new Error('רישום הרישום הביומטרי נכשל');
+                        const errorData = await registrationResponse.json();
+                        const serverError = errorData.error || 'רישום הרישום הביומטרי נכשל';
+                        throw new Error(serverError);
                     }}
                 }} else {{
                     // Authentication for existing user
@@ -768,7 +909,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     }});
                     
                     // Send authentication result to server
-                    const authResponse = await fetch(`/api/webauthn/authenticate`, {{
+                    const authResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/authenticate`, {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
@@ -790,7 +931,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                     if (authResponse.ok) {{
                         showSuccess('ברוך השב!', 'האימות הושלם בהצלחה');
                         // Update server that verification is complete
-                        await fetch(`/api/verification/complete`, {{
+                        await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {{
                             method: 'POST',
                             headers: {{ 'Content-Type': 'application/json' }},
                             body: JSON.stringify({{ token: token }})
@@ -811,6 +952,36 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                 }}
                 document.getElementById('verifyBtn').disabled = false;
             }}
+        }}
+        
+        function showMobileLink() {{
+            const currentUrl = window.location.href;
+            const qrSection = document.getElementById('qrSection');
+            const qrCodeDiv = document.getElementById('qrcode');
+            
+            // Show the section
+            qrSection.classList.add('show');
+            
+            // Simple mobile link display
+            qrCodeDiv.innerHTML = `
+                <div style="padding: 30px; background: #f0f9ff; border: 3px solid #303e90; border-radius: 16px; color: #303e90; text-align: center; line-height: 1.6;">
+                    <div style="font-size: 24px; margin-bottom: 20px;">📱</div>
+                    <div style="font-size: 18px; font-weight: 600; margin-bottom: 16px;">פתח בטלפון הנייד שלך</div>
+                    <a href="${{currentUrl}}" target="_blank" style="display: inline-block; background: #303e90; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px; margin: 10px 0;">
+                        פתח את הקישור בטלפון
+                    </a>
+                    <div style="margin-top: 16px; font-size: 14px; opacity: 0.8;">
+                        או העתק את הקישור ושלח לעצמך בהודעה
+                    </div>
+                    <div style="margin-top: 12px; padding: 12px; background: white; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; color: #666; border: 1px solid #e5e7eb;">
+                        ${{currentUrl}}
+                    </div>
+                </div>
+            `;
+            
+            // Update status and hide verification button
+            showStatus('פתח את הקישור בטלפון הנייד', 'השתמש בכפתור או העתק את הקישור למטה', 'info');
+            document.getElementById('verifyBtn').style.display = 'none';
         }}
         
         // Initialize
@@ -926,37 +1097,45 @@ def list_all_sessions(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/webauthn/options", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
-    token = req.params.get('token')
-    if not token:
+    try:
+        token = req.params.get('token')
+        if not token:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing token parameter"}),
+                status_code=400,
+                headers={"Content-Type": "application/json"}
+            )
+        
+        user_id = verify_jwt_token(token)
+        if not user_id:
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid or expired token"}),
+                status_code=401,
+                headers={"Content-Type": "application/json"}
+            )
+        
+        session = get_session(token)
+        if not session:
+            return func.HttpResponse(
+                json.dumps({"error": "Session not found"}),
+                status_code=404,
+                headers={"Content-Type": "application/json"}
+            )
+        
+        user_id_db, challenge, verified, expires_at = session
+        credentials = get_user_credentials(user_id)
+    except Exception as e:
+        logging.error(f"WebAuthn options error: {str(e)}")
         return func.HttpResponse(
-            json.dumps({"error": "Missing token parameter"}),
-            status_code=400,
+            json.dumps({"error": f"Server error: {str(e)}"}),
+            status_code=500,
             headers={"Content-Type": "application/json"}
         )
     
-    user_id = verify_jwt_token(token)
-    if not user_id:
-        return func.HttpResponse(
-            json.dumps({"error": "Invalid or expired token"}),
-            status_code=401,
-            headers={"Content-Type": "application/json"}
-        )
-    
-    session = get_session(token)
-    if not session:
-        return func.HttpResponse(
-            json.dumps({"error": "Session not found"}),
-            status_code=404,
-            headers={"Content-Type": "application/json"}
-        )
-    
-    user_id_db, challenge, verified, expires_at = session
-    credentials = get_user_credentials(user_id)
-    
-    if credentials:
-        # Existing user - authentication
-        return func.HttpResponse(
-            json.dumps({
+    try:
+        if credentials:
+            # Existing user - authentication
+            response_data = {
                 "challenge": challenge,
                 "allowCredentials": [
                     {"id": cred[0], "type": "public-key"}
@@ -964,17 +1143,29 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 ],
                 "userVerification": "required",
                 "isRegistration": False
-            }),
-            headers={"Content-Type": "application/json"}
-        )
-    else:
-        # New user - registration
-        return func.HttpResponse(
-            json.dumps({
+            }
+            return func.HttpResponse(
+                json.dumps(response_data),
+                headers={"Content-Type": "application/json"}
+            )
+        else:
+            # New user - registration
+            try:
+                user_id_b64 = base64.b64encode(user_id.encode()).decode()
+                logging.info(f"User ID base64: {user_id_b64}")
+            except Exception as b64_error:
+                logging.error(f"Base64 encoding error: {str(b64_error)}")
+                return func.HttpResponse(
+                    json.dumps({"error": f"Base64 encoding failed: {str(b64_error)}"}),
+                    status_code=500,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+            response_data = {
                 "challenge": challenge,
                 "rp": {"id": RP_ID, "name": "Investor Verification"},
                 "user": {
-                    "id": base64.b64encode(user_id.encode()).decode(),
+                    "id": user_id_b64,
                     "name": user_id,
                     "displayName": user_id
                 },
@@ -985,7 +1176,16 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 },
                 "attestation": "none",
                 "isRegistration": True
-            }),
+            }
+            return func.HttpResponse(
+                json.dumps(response_data),
+                headers={"Content-Type": "application/json"}
+            )
+    except Exception as response_error:
+        logging.error(f"WebAuthn options response error: {str(response_error)}")
+        return func.HttpResponse(
+            json.dumps({"error": f"Response generation failed: {str(response_error)}"}),
+            status_code=500,
             headers={"Content-Type": "application/json"}
         )
 
@@ -1012,7 +1212,7 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        # REAL WebAuthn verification - SECURITY FIX
+        # REAL WebAuthn verification - SECURITY FIX  
         try:
             # Get session challenge for verification
             user_id_db, challenge_b64, verified, expires_at = get_session(token)
@@ -1023,17 +1223,42 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                     headers={"Content-Type": "application/json"}
                 )
             
+            # Validate credential data structure
+            if not credential_data or "response" not in credential_data:
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid credential data"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+            response_data = credential_data["response"]
+            if "clientDataJSON" not in response_data or "attestationObject" not in response_data:
+                return func.HttpResponse(
+                    json.dumps({"error": "Missing required credential response fields"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
             # Convert credential data to proper WebAuthn format
             attestation_response = AuthenticatorAttestationResponse(
-                client_data_json=base64url_decode(credential_data["response"]["clientDataJSON"]),
-                attestation_object=base64url_decode(credential_data["response"]["attestationObject"])
+                client_data_json=base64url_decode(response_data["clientDataJSON"]),
+                attestation_object=base64url_decode(response_data["attestationObject"])
             )
             
+            # Use rawId as id if id is missing (common browser behavior)
+            cred_id = credential_data.get("id", credential_data.get("rawId", ""))
+            if not cred_id:
+                return func.HttpResponse(
+                    json.dumps({"error": "Missing credential ID"}),
+                    status_code=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
             credential = RegistrationCredential(
-                id=credential_data["id"],
-                raw_id=base64url_decode(credential_data["rawId"]),
+                id=cred_id,
+                raw_id=base64url_decode(credential_data.get("rawId", cred_id)),
                 response=attestation_response,
-                type=credential_data["type"]
+                type=credential_data.get("type", "public-key")
             )
             
             # ACTUAL WebAuthn verification (not fake!)
@@ -1045,12 +1270,8 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                 require_user_verification=True
             )
             
-            if not verification.verified:
-                return func.HttpResponse(
-                    json.dumps({"error": "WebAuthn verification failed"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
+            # For WebAuthn library 2.2.0, if verification succeeds, we get the result
+            # If it fails, an exception is thrown, so we're here means success
             
             # Save REAL credential data
             credential_id_b64 = base64.b64encode(verification.credential_id).decode()
@@ -1058,9 +1279,16 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
             save_credential(user_id, credential_id_b64, public_key_b64)
             
         except Exception as verification_error:
-            logging.error(f"WebAuthn verification failed: {str(verification_error)}")
+            error_msg = str(verification_error)
+            logging.error(f"WebAuthn verification failed: {error_msg}")
+            logging.error(f"Credential data: {json.dumps(credential_data, indent=2)}")
+            logging.error(f"Challenge: {challenge_b64}")
+            logging.error(f"Expected origin: {ORIGIN}")
+            logging.error(f"Expected RP ID: {RP_ID}")
+            
+            # Return detailed error for debugging temporarily
             return func.HttpResponse(
-                json.dumps({"error": f"Biometric verification failed: {str(verification_error)}"}),
+                json.dumps({"error": f"DEBUG: {error_msg}"}),
                 status_code=400,
                 headers={"Content-Type": "application/json"}
             )
