@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}שגיאה - אינטרקטיב ישראל{% endblock %}
+
+{% block content %}
+<div class="verification-card">
+    <div class="verification-icon" style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);">
+        ⚠️ שגיאה
+    </div>
+    
+    <h1 class="main-heading" style="color: #dc2626;">אירעה שגיאה</h1>
+    <p class="subheading">{{ error_message | default('מצטערים, אירעה שגיאה לא צפויה') }}</p>
+    
+    <div class="status-container error">
+        <div class="status-text">{{ error_title | default('שגיאה במערכת') }}</div>
+        <div class="status-subtitle">{{ error_subtitle | default('אנא נסה שוב מאוחר יותר') }}</div>
+    </div>
+    
+    {% if error_details %}
+    <div style="background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; padding: 16px; margin: 20px 0; text-align: right;">
+        <div style="font-size: 14px; color: #dc2626; font-family: monospace;">
+            {{ error_details }}
+        </div>
+    </div>
+    {% endif %}
+    
+    <div style="display: flex; gap: 16px; margin-top: 32px;">
+        <button onclick="window.history.back()" class="verify-button" style="background: #6b7280; flex: 1;">
+            חזור
+        </button>
+        <button onclick="window.location.reload()" class="verify-button" style="flex: 1;">
+            נסה שוב
+        </button>
+    </div>
+    
+    <div class="security-notice">
+        <h4>מה קרה?</h4>
+        <ul class="security-points">
+            <li>{{ explanation_1 | default('המערכת נתקלה בבעיה טכנית זמנית') }}</li>
+            <li>{{ explanation_2 | default('הנתונים שלך מוגנים ולא נפגעו') }}</li>
+            <li>{{ explanation_3 | default('אנא נסה שוב או פנה לתמיכה הטכנית') }}</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto refresh after 30 seconds for temporary errors
+    {% if auto_refresh %}
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+    {% endif %}
+    
+    console.error('Error page loaded:', {
+        message: '{{ error_message | default("Unknown error") }}',
+        details: '{{ error_details | default("No details") }}',
+        timestamp: new Date().toISOString()
+    });
+</script>
+{% endblock %}

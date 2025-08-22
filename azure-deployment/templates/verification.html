@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="verification-card">
+    <div class="verification-icon">אינטרקטיב ישראל</div>
+    
+    <h1 class="main-heading">אימות זהות</h1>
+    <p class="subheading">אבטח את חשבון ההשקעות שלך באמצעות אימות ביומטרי</p>
+    
+    <div id="status" class="status-container">
+        <div class="status-text">מוכן לאימות הזהות שלך</div>
+        <div class="status-subtitle">השתמש באימות הביומטרי של המכשיר שלך</div>
+    </div>
+    
+    <div class="biometric-icons">
+        <div class="biometric-icon">📱</div>
+        <div class="biometric-icon">👆</div>
+        <div class="biometric-icon">👤</div>
+    </div>
+    
+    <div class="qr-section" id="qrSection">
+        <div class="qr-title">פתח בטלפון הנייד</div>
+        <div id="qrcode"></div>
+        <div class="qr-instructions">
+            השתמש בקישור למטה לפתיחה בטלפון הנייד<br>
+            האימות יתבצע במכשיר הנייד עם Face ID או Touch ID
+        </div>
+    </div>
+    
+    <button id="verifyBtn" class="verify-button" onclick="startVerification()">
+        אמת את הזהות שלי
+    </button>
+    
+    <div class="security-notice">
+        <h4>האבטחה והפרטיות שלך</h4>
+        <ul class="security-points">
+            <li>הנתונים הביומטריים שלך לא יוצאים מהמכשיר שלך</li>
+            <li>הצפנה ברמה בנקאית מגנה על כל התקשורת</li>
+            <li>האימות מסתיים תוך שניות, לא דקות</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const token = "{{ token }}";
+    
+    function showStatus(message, subtitle = '', type = 'info') {
+        const statusContainer = document.getElementById('status');
+        const statusText = statusContainer.querySelector('.status-text') || statusContainer;
+        const statusSubtitle = statusContainer.querySelector('.status-subtitle');
+        
+        statusText.textContent = message;
+        if (statusSubtitle && subtitle) {
+            statusSubtitle.textContent = subtitle;
+        }
+        
+        // Remove all status classes
+        statusContainer.classList.remove('info', 'success', 'error');
+        // Add the appropriate class
+        statusContainer.classList.add(type);
+        
+        // Animate biometric icons based on status
+        const icons = document.querySelectorAll('.biometric-icon');
+        icons.forEach((icon, index) => {
+            setTimeout(() => {
+                if (type === 'info' && message.includes('biometric')) {
+                    icon.classList.add('active');
+                } else {
+                    icon.classList.remove('active');
+                }
+            }, index * 200);
+        });
+    }
+    
+    function showSuccess(message, subtitle = 'האימות הושלם בהצלחה') {
+        showStatus(message, subtitle, 'success');
+        
+        const button = document.getElementById('verifyBtn');
+        button.innerHTML = '✓ הזהות אומתה';
+        button.disabled = true;
+        
+        // Celebrate with all icons active
+        document.querySelectorAll('.biometric-icon').forEach(icon => {
+            icon.classList.add('active');
+        });
+    }
+    
+    function showError(message, subtitle = 'אנא נסה שוב') {
+        showStatus(message, subtitle, 'error');
+        document.getElementById('verifyBtn').disabled = false;
+    }
+    
+    async function startVerification() {
+        if (!window.PublicKeyCredential) {
+            showError('אימות ביומטרי לא נתמך', 'המכשיר הזה לא תומך באימות ביומטרי');
+            return;
+        }
+        
+        // Mobile-first: Check if running on mobile device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (!isMobile) {
+            // Desktop user - show mobile link
+            showMobileLink();
+            return;
+        }
+        
+        showStatus('מכין אימות ביומטרי...', 'מתחבר לשרת מאובטח');
+        document.getElementById('verifyBtn').disabled = true;
+        
+        try {
+            // Get WebAuthn options from server
+            const optionsResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/options?token=${token}`);
+            if (!optionsResponse.ok) {
+                throw new Error('החיבור לשרת נכשל');
+            }
+            
+            const options = await optionsResponse.json();
+            
+            // Convert base64url to ArrayBuffer for WebAuthn
+            function base64urlToBuffer(base64url) {
+                const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+                const binary = atob(padded);
+                const buffer = new ArrayBuffer(binary.length);
+                const view = new Uint8Array(buffer);
+                for (let i = 0; i < binary.length; i++) {
+                    view[i] = binary.charCodeAt(i);
+                }
+                return buffer;
+            }
+            
+            function bufferToBase64url(buffer) {
+                const binary = String.fromCharCode(...new Uint8Array(buffer));
+                const base64 = btoa(binary);
+                return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+            }
+            
+            // If this is registration (new user)
+            if (options.isRegistration) {
+                const publicKeyCredentialCreationOptions = {
+                    challenge: base64urlToBuffer(options.challenge),
+                    rp: options.rp,
+                    user: {
+                        ...options.user,
+                        id: base64urlToBuffer(options.user.id)
+                    },
+                    pubKeyCredParams: options.pubKeyCredParams,
+                    authenticatorSelection: options.authenticatorSelection,
+                    timeout: 60000,
+                    attestation: options.attestation || 'none'
+                };
+                
+                showStatus('השלם אימות ביומטרי', 'גע בחיישן טביעת האצבע או השתמש ב-Face ID', 'info');
+                const credential = await navigator.credentials.create({
+                    publicKey: publicKeyCredentialCreationOptions
+                });
+                
+                // Send registration result to server
+                const registrationResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: token,
+                        credential: {
+                            id: credential.id,
+                            rawId: bufferToBase64url(credential.rawId),
+                            type: credential.type,
+                            response: {
+                                clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                                attestationObject: bufferToBase64url(credential.response.attestationObject)
+                            }
+                        }
+                    })
+                });
+                
+                if (registrationResponse.ok) {
+                    showSuccess('הזהות אומתה בהצלחה!', 'הרישום הביומטרי שלך נרשם בהצלחה');
+                    // Update server that verification is complete
+                    await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token })
+                    });
+                } else {
+                    const errorData = await registrationResponse.json();
+                    const serverError = errorData.error || 'רישום הרישום הביומטרי נכשל';
+                    throw new Error(serverError);
+                }
+            } else {
+                // Authentication for existing user
+                const publicKeyCredentialRequestOptions = {
+                    challenge: base64urlToBuffer(options.challenge),
+                    allowCredentials: options.allowCredentials ? options.allowCredentials.map(cred => ({
+                        ...cred,
+                        id: base64urlToBuffer(cred.id)
+                    })) : [],
+                    userVerification: options.userVerification || 'required',
+                    timeout: 60000
+                };
+                
+                showStatus('אמת בביומטריה', 'השתמש בטביעת האצבע הרשומה או ב-Face ID', 'info');
+                const credential = await navigator.credentials.get({
+                    publicKey: publicKeyCredentialRequestOptions
+                });
+                
+                // Send authentication result to server
+                const authResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/authenticate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: token,
+                        credential: {
+                            id: credential.id,
+                            rawId: bufferToBase64url(credential.rawId),
+                            type: credential.type,
+                            response: {
+                                clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                                authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+                                signature: bufferToBase64url(credential.response.signature),
+                                userHandle: credential.response.userHandle ? bufferToBase64url(credential.response.userHandle) : null
+                            }
+                        }
+                    })
+                });
+                
+                if (authResponse.ok) {
+                    showSuccess('ברוך השב!', 'האימות הושלם בהצלחה');
+                    // Update server that verification is complete
+                    await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token })
+                    });
+                } else {
+                    throw new Error('אימות הזהות נכשל');
+                }
+            }
+            
+        } catch (error) {
+            console.error('WebAuthn error:', error);
+            if (error.name === 'NotAllowedError') {
+                showError('האימות בוטל', 'ביטלת את האימות הביומטרי');
+            } else if (error.name === 'InvalidStateError') {
+                showError('המכשיר לא מוכן', 'אנא וודא שהאימות הביומטרי מופעל');
+            } else {
+                showError('האימות נכשל', error.message);
+            }
+            document.getElementById('verifyBtn').disabled = false;
+        }
+    }
+    
+    function showMobileLink() {
+        const currentUrl = window.location.href;
+        const qrSection = document.getElementById('qrSection');
+        const qrCodeDiv = document.getElementById('qrcode');
+        
+        // Show the section
+        qrSection.classList.add('show');
+        
+        // Simple mobile link display
+        qrCodeDiv.innerHTML = `
+            <div style="padding: 30px; background: #f0f9ff; border: 3px solid #303e90; border-radius: 16px; color: #303e90; text-align: center; line-height: 1.6;">
+                <div style="font-size: 24px; margin-bottom: 20px;">📱</div>
+                <div style="font-size: 18px; font-weight: 600; margin-bottom: 16px;">פתח בטלפון הנייד שלך</div>
+                <a href="${currentUrl}" target="_blank" style="display: inline-block; background: #303e90; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px; margin: 10px 0;">
+                    פתח את הקישור בטלפון
+                </a>
+                <div style="margin-top: 16px; font-size: 14px; opacity: 0.8;">
+                    או העתק את הקישור ושלח לעצמך בהודעה
+                </div>
+                <div style="margin-top: 12px; padding: 12px; background: white; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; color: #666; border: 1px solid #e5e7eb;">
+                    ${currentUrl}
+                </div>
+            </div>
+        `;
+        
+        // Update status and hide verification button
+        showStatus('פתח את הקישור בטלפון הנייד', 'השתמש בכפתור או העתק את הקישור למטה', 'info');
+        document.getElementById('verifyBtn').style.display = 'none';
+    }
+    
+    // Initialize
+    showStatus('מוכן לאימות הזהות שלך', 'הקש על הכפתור למטה כדי להתחיל');
+</script>
+{% endblock %}

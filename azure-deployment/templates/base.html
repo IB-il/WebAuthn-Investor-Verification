@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}אימות משקיע מאובטח - אינטרקטיב ישראל{% endblock %}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            line-height: 1.6;
+            direction: rtl;
+        }
+        
+        /* Header with logo */
+        .header {
+            background: #ffffff;
+            padding: 20px 0;
+            border-bottom: 1px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .company-logo {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .logo-img {
+            height: 60px;
+            width: auto;
+        }
+        
+        .company-name {
+            font-size: 28px;
+            font-weight: 700;
+            color: #303e90;
+            font-family: 'Assistant', sans-serif;
+        }
+        
+        .security-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f0f9ff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            color: #0369a1;
+            font-weight: 500;
+        }
+        
+        /* Main content */
+        .main-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        }
+        
+        .verification-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+            padding: 48px 40px;
+            max-width: 480px;
+            width: 100%;
+            text-align: center;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .verification-icon {
+            margin: 0 auto 24px;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #303e90 0%, #4f46e5 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(48, 62, 144, 0.2);
+            font-family: 'Assistant', sans-serif;
+            width: fit-content;
+        }
+        
+        .main-heading {
+            font-size: 50px;
+            font-weight: 700;
+            color: #303e90;
+            margin-bottom: 16px;
+            font-family: 'Assistant', sans-serif;
+            text-align: center;
+        }
+        
+        .subheading {
+            font-size: 19px;
+            color: #555;
+            margin-bottom: 32px;
+            font-weight: 400;
+            text-align: center;
+        }
+        
+        .status-container {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+            transition: all 0.3s ease;
+        }
+        
+        .status-container.info {
+            background: #f0f9ff;
+            border-color: #7dd3fc;
+            color: #0369a1;
+        }
+        
+        .status-container.success {
+            background: #f0fdf4;
+            border-color: #86efac;
+            color: #166534;
+        }
+        
+        .status-container.error {
+            background: #fef2f2;
+            border-color: #fca5a5;
+            color: #dc2626;
+        }
+        
+        .status-text {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .status-subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        
+        .biometric-icons {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin: 24px 0;
+        }
+        
+        .biometric-icon {
+            width: 48px;
+            height: 48px;
+            background: #f8fafc;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            opacity: 0.6;
+            transition: all 0.3s ease;
+        }
+        
+        .biometric-icon.active {
+            background: linear-gradient(135deg, #303e90 0%, #db1222 100%);
+            color: white;
+            opacity: 1;
+            transform: scale(1.1);
+        }
+        
+        .verify-button {
+            background: #303e90;
+            color: white;
+            border: none;
+            padding: 20px 40px;
+            border-radius: 5px;
+            font-size: 19px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(48, 62, 144, 0.2);
+            position: relative;
+            font-family: 'Assistant', sans-serif;
+        }
+        
+        .verify-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(48, 62, 144, 0.3);
+        }
+        
+        .verify-button:active {
+            transform: translateY(0);
+        }
+        
+        .verify-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .security-notice {
+            margin-top: 32px;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #6b7280;
+            text-align: left;
+        }
+        
+        .security-notice h4 {
+            color: #374151;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .security-points {
+            list-style: none;
+            margin: 12px 0;
+        }
+        
+        .security-points li {
+            padding: 4px 0;
+            position: relative;
+            padding-left: 20px;
+        }
+        
+        .security-points li:before {
+            content: "🔒";
+            position: absolute;
+            left: 0;
+            font-size: 12px;
+        }
+        
+        /* QR Code Section */
+        .qr-section {
+            display: none;
+            text-align: center;
+            margin: 32px 0;
+            padding: 24px;
+            background: #f8fafc;
+            border-radius: 12px;
+            border: 2px solid #e5e7eb;
+        }
+        
+        .qr-section.show {
+            display: block;
+        }
+        
+        .qr-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #303e90;
+            margin-bottom: 16px;
+        }
+        
+        #qrcode {
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .qr-instructions {
+            font-size: 14px;
+            color: #666;
+            margin-top: 16px;
+            line-height: 1.5;
+        }
+
+        /* Desktop QR optimizations */
+        @media (min-width: 641px) {
+            .qr-section {
+                background: #ffffff;
+                border: 3px solid #303e90;
+                border-radius: 16px;
+                box-shadow: 0 8px 24px rgba(48, 62, 144, 0.15);
+            }
+            
+            .qr-title {
+                font-size: 24px;
+                margin-bottom: 24px;
+            }
+            
+            #qrcode canvas {
+                border-radius: 12px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            }
+        }
+        
+        /* Mobile optimizations */
+        @media (max-width: 640px) {
+            .header-content {
+                padding: 0 16px;
+            }
+            
+            .company-name {
+                font-size: 20px;
+            }
+            
+            .verification-card {
+                margin: 20px;
+                padding: 32px 24px;
+            }
+            
+            .main-heading {
+                font-size: 28px;
+            }
+            
+            .subheading {
+                font-size: 16px;
+            }
+            
+            .qr-section {
+                display: none !important;
+            }
+        }
+
+        {% block styles %}{% endblock %}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="company-logo">
+                <img src="https://www.inter-il.com/wp-content/uploads/2025/03/Screenshot-2025-03-26-161501.png" 
+                     alt="אינטרקטיב ישראל לוגו" class="logo-img">
+            </div>
+            <div class="security-badge">
+                🔒 אבטחה ברמה בנקאית
+            </div>
+        </div>
+    </header>
+    
+    <main class="main-container">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

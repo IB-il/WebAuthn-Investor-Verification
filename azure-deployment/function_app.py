@@ -21,6 +21,8 @@ from webauthn.helpers.structs import (
 )
 from azure.data.tables import TableServiceClient
 from lib.services.storage_service import AzureStorageService
+from lib.services.webauthn_service import WebAuthnService
+from lib.services.template_service import TemplateService
 
 # Configuration
 RP_ID = os.getenv("RP_ID", "webauthn-investor.azurewebsites.net")
@@ -32,9 +34,11 @@ JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
 # SECURITY FIX: Admin API authentication
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin-key-d8f9e7a6b5c4d3e2f1")
 
-# Initialize Azure Storage Service (Clean Architecture Phase 1)
+# Initialize Services (Clean Architecture Phase 1, 2 & 3)
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
 storage_service = AzureStorageService(AZURE_STORAGE_CONNECTION_STRING)
+webauthn_service = WebAuthnService(storage_service, RP_ID, ORIGIN)
+template_service = TemplateService()
 
 # Production: Pure Azure Table Storage only
 # No fallback storage for production deployment
@@ -101,10 +105,10 @@ def update_sign_count(credential_id: str, new_sign_count: int):
     # For production WebAuthn, sign count is optional
     logging.info(f"Sign count update for credential {credential_id}: {new_sign_count}")
 
-def create_session(user_id: str, token: str, challenge: str):
+def create_session(user_id: str, token: str, challenge: str, username: str = ""):
     """Create session - now uses AzureStorageService (Clean Architecture Phase 1)"""
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=JWT_TTL_SECONDS)
-    return storage_service.save_session(token, user_id, challenge, expires_at, verified=False)
+    return storage_service.save_session(token, user_id, challenge, expires_at, username, verified=False)
 
 def get_session_data(token: str):
     """Get session data - now uses AzureStorageService (Clean Architecture Phase 1)"""
@@ -246,19 +250,13 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
             )
         
         token = generate_jwt_token(user_id)
-        credentials = get_user_credentials(user_id)
         
-        if credentials:
+        # Use WebAuthn service to check for existing credentials and generate options
+        if webauthn_service.has_existing_credentials(user_id):
             # Existing user - authentication
-            options = generate_authentication_options(
-                rp_id=RP_ID,
-                allow_credentials=[
-                    PublicKeyCredentialDescriptor(id=base64.b64decode(cred[0]) if isinstance(cred[0], str) and cred[0] else b'')
-                    for cred in credentials if cred and len(cred) > 0 and cred[0]
-                ],
-                user_verification=UserVerificationRequirement.REQUIRED
-            )
-            create_session(user_id, token, base64.b64encode(options.challenge).decode())
+            credentials = storage_service.get_user_credentials(user_id)
+            options_data = webauthn_service.generate_authentication_options(user_id, credentials)
+            create_session(user_id, token, options_data["challenge"], username)
             log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "Existing user authentication")
             
             return func.HttpResponse(
@@ -270,18 +268,10 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         else:
-            # New user - registration
-            options = generate_registration_options(
-                rp_id=RP_ID,
-                rp_name="Investor Verification",
-                user_id=user_id.encode(),
-                user_name=username,
-                user_display_name=username,
-                authenticator_selection=AuthenticatorSelectionCriteria(
-                    user_verification=UserVerificationRequirement.REQUIRED
-                )
-            )
-            create_session(user_id, token, base64.b64encode(options.challenge).decode())
+            # New user - registration  
+            credentials = storage_service.get_user_credentials(user_id)
+            options_data = webauthn_service.generate_registration_options(user_id, username, credentials)
+            create_session(user_id, token, options_data["challenge"], username)
             log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "New user registration")
             
             return func.HttpResponse(
@@ -301,661 +291,53 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/verify", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def verification_page(req: func.HttpRequest) -> func.HttpResponse:
-    token = req.params.get('token')
-    if not token:
-        return func.HttpResponse("Missing token", status_code=400)
-    
-    user_id = verify_jwt_token(token)
-    if not user_id:
-        return func.HttpResponse("Invalid or expired token", status_code=401)
-    
-    # Return Interactive Israel styled page with Hebrew support and QR code
-    html_content = f'''
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>אימות משקיע מאובטח - אינטרקטיב ישראל</title>
-    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
+    """Verification page - now uses TemplateService (Clean Architecture Phase 3)"""
+    try:
+        token = req.params.get('token')
+        if not token:
+            return func.HttpResponse(
+                template_service.render_error_page(
+                    error_message="חסר טוקן אימות",
+                    error_title="פרמטר חסר",
+                    error_subtitle="הקישור לא תקין"
+                ),
+                status_code=400,
+                headers={"Content-Type": "text/html"}
+            )
         
-        body {{
-            font-family: 'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #ffffff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            line-height: 1.6;
-            direction: rtl;
-        }}
+        user_id = verify_jwt_token(token)
+        if not user_id:
+            return func.HttpResponse(
+                template_service.render_error_page(
+                    error_message="טוקן לא תקין או פג תוקפו",
+                    error_title="אימות נכשל",
+                    error_subtitle="אנא קבל קישור חדש"
+                ),
+                status_code=401,
+                headers={"Content-Type": "text/html"}
+            )
         
-        /* Header with logo */
-        .header {{
-            background: #ffffff;
-            padding: 20px 0;
-            border-bottom: 1px solid #e5e7eb;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }}
+        # Render verification page using template service
+        html_content = template_service.render_verification_page(
+            token=token,
+            user_id=user_id
+        )
         
-        .header-content {{
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }}
+        return func.HttpResponse(
+            html_content,
+            headers={"Content-Type": "text/html"}
+        )
         
-        .company-logo {{
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }}
-        
-        .logo-img {{
-            height: 60px;
-            width: auto;
-        }}
-        
-        .company-name {{
-            font-size: 28px;
-            font-weight: 700;
-            color: #303e90;
-            font-family: 'Assistant', sans-serif;
-        }}
-        
-        .security-badge {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: #f0f9ff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            color: #0369a1;
-            font-weight: 500;
-        }}
-        
-        /* Main content */
-        .main-container {{
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 40px 20px;
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-        }}
-        
-        .verification-card {{
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
-            padding: 48px 40px;
-            max-width: 480px;
-            width: 100%;
-            text-align: center;
-            border: 1px solid #e5e7eb;
-        }}
-        
-        .verification-icon {{
-            margin: 0 auto 24px;
-            padding: 16px 24px;
-            background: linear-gradient(135deg, #303e90 0%, #4f46e5 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 18px;
-            font-weight: 600;
-            box-shadow: 0 8px 24px rgba(48, 62, 144, 0.2);
-            font-family: 'Assistant', sans-serif;
-            width: fit-content;
-        }}
-        
-        .main-heading {{
-            font-size: 50px;
-            font-weight: 700;
-            color: #303e90;
-            margin-bottom: 16px;
-            font-family: 'Assistant', sans-serif;
-            text-align: center;
-        }}
-        
-        .subheading {{
-            font-size: 19px;
-            color: #555;
-            margin-bottom: 32px;
-            font-weight: 400;
-            text-align: center;
-        }}
-        
-        .status-container {{
-            background: #f8fafc;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 32px;
-            transition: all 0.3s ease;
-        }}
-        
-        .status-container.info {{
-            background: #f0f9ff;
-            border-color: #7dd3fc;
-            color: #0369a1;
-        }}
-        
-        .status-container.success {{
-            background: #f0fdf4;
-            border-color: #86efac;
-            color: #166534;
-        }}
-        
-        .status-container.error {{
-            background: #fef2f2;
-            border-color: #fca5a5;
-            color: #dc2626;
-        }}
-        
-        .status-text {{
-            font-size: 16px;
-            font-weight: 500;
-            margin-bottom: 8px;
-        }}
-        
-        .status-subtitle {{
-            font-size: 14px;
-            opacity: 0.8;
-        }}
-        
-        .biometric-icons {{
-            display: flex;
-            justify-content: center;
-            gap: 24px;
-            margin: 24px 0;
-        }}
-        
-        .biometric-icon {{
-            width: 48px;
-            height: 48px;
-            background: #f8fafc;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            opacity: 0.6;
-            transition: all 0.3s ease;
-        }}
-        
-        .biometric-icon.active {{
-            background: linear-gradient(135deg, #303e90 0%, #db1222 100%);
-            color: white;
-            opacity: 1;
-            transform: scale(1.1);
-        }}
-        
-        .verify-button {{
-            background: #303e90;
-            color: white;
-            border: none;
-            padding: 20px 40px;
-            border-radius: 5px;
-            font-size: 19px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(48, 62, 144, 0.2);
-            position: relative;
-            font-family: 'Assistant', sans-serif;
-        }}
-        
-        .verify-button:hover:not(:disabled) {{
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(48, 62, 144, 0.3);
-        }}
-        
-        .verify-button:active {{
-            transform: translateY(0);
-        }}
-        
-        .verify-button:disabled {{
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }}
-        
-        .security-notice {{
-            margin-top: 32px;
-            padding: 20px;
-            background: #f8fafc;
-            border-radius: 8px;
-            font-size: 14px;
-            color: #6b7280;
-            text-align: left;
-        }}
-        
-        .security-notice h4 {{
-            color: #374151;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }}
-        
-        .security-points {{
-            list-style: none;
-            margin: 12px 0;
-        }}
-        
-        .security-points li {{
-            padding: 4px 0;
-            position: relative;
-            padding-left: 20px;
-        }}
-        
-        .security-points li:before {{
-            content: "🔒";
-            position: absolute;
-            left: 0;
-            font-size: 12px;
-        }}
-        
-        /* QR Code Section */
-        .qr-section {{
-            display: none;
-            text-align: center;
-            margin: 32px 0;
-            padding: 24px;
-            background: #f8fafc;
-            border-radius: 12px;
-            border: 2px solid #e5e7eb;
-        }}
-        
-        .qr-section.show {{
-            display: block;
-        }}
-        
-        .qr-title {{
-            font-size: 18px;
-            font-weight: 600;
-            color: #303e90;
-            margin-bottom: 16px;
-        }}
-        
-        #qrcode {{
-            margin: 20px 0;
-            display: flex;
-            justify-content: center;
-        }}
-        
-        .qr-instructions {{
-            font-size: 14px;
-            color: #666;
-            margin-top: 16px;
-            line-height: 1.5;
-        }}
-
-        /* Desktop QR optimizations */
-        @media (min-width: 641px) {{
-            .qr-section {{
-                background: #ffffff;
-                border: 3px solid #303e90;
-                border-radius: 16px;
-                box-shadow: 0 8px 24px rgba(48, 62, 144, 0.15);
-            }}
-            
-            .qr-title {{
-                font-size: 24px;
-                margin-bottom: 24px;
-            }}
-            
-            #qrcode canvas {{
-                border-radius: 12px;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            }}
-        }}
-        
-        /* Mobile optimizations */
-        @media (max-width: 640px) {{
-            .header-content {{
-                padding: 0 16px;
-            }}
-            
-            .company-name {{
-                font-size: 20px;
-            }}
-            
-            .verification-card {{
-                margin: 20px;
-                padding: 32px 24px;
-            }}
-            
-            .main-heading {{
-                font-size: 28px;
-            }}
-            
-            .subheading {{
-                font-size: 16px;
-            }}
-            
-            .qr-section {{
-                display: none !important;
-            }}
-        }}
-    </style>
-</head>
-<body>
-    <header class="header">
-        <div class="header-content">
-            <div class="company-logo">
-                <img src="https://www.inter-il.com/wp-content/uploads/2025/03/Screenshot-2025-03-26-161501.png" 
-                     alt="אינטרקטיב ישראל לוגו" class="logo-img">
-            </div>
-            <div class="security-badge">
-                🔒 אבטחה ברמה בנקאית
-            </div>
-        </div>
-    </header>
-    
-    <main class="main-container">
-        <div class="verification-card">
-            <div class="verification-icon">אינטרקטיב ישראל</div>
-            
-            <h1 class="main-heading">אימות זהות</h1>
-            <p class="subheading">אבטח את חשבון ההשקעות שלך באמצעות אימות ביומטרי</p>
-            
-            <div id="status" class="status-container">
-                <div class="status-text">מוכן לאימות הזהות שלך</div>
-                <div class="status-subtitle">השתמש באימות הביומטרי של המכשיר שלך</div>
-            </div>
-            
-            <div class="biometric-icons">
-                <div class="biometric-icon">📱</div>
-                <div class="biometric-icon">👆</div>
-                <div class="biometric-icon">👤</div>
-            </div>
-            
-            <div class="qr-section" id="qrSection">
-                <div class="qr-title">פתח בטלפון הנייד</div>
-                <div id="qrcode"></div>
-                <div class="qr-instructions">
-                    השתמש בקישור למטה לפתיחה בטלפון הנייד<br>
-                    האימות יתבצע במכשיר הנייד עם Face ID או Touch ID
-                </div>
-            </div>
-            
-            <button id="verifyBtn" class="verify-button" onclick="startVerification()">
-                אמת את הזהות שלי
-            </button>
-            
-            <div class="security-notice">
-                <h4>האבטחה והפרטיות שלך</h4>
-                <ul class="security-points">
-                    <li>הנתונים הביומטריים שלך לא יוצאים מהמכשיר שלך</li>
-                    <li>הצפנה ברמה בנקאית מגנה על כל התקשורת</li>
-                    <li>האימות מסתיים תוך שניות, לא דקות</li>
-                </ul>
-            </div>
-        </div>
-    </main>
-
-    <script>
-        const token = "{token}";
-        
-        function showStatus(message, subtitle = '', type = 'info') {{
-            const statusContainer = document.getElementById('status');
-            const statusText = statusContainer.querySelector('.status-text') || statusContainer;
-            const statusSubtitle = statusContainer.querySelector('.status-subtitle');
-            
-            statusText.textContent = message;
-            if (statusSubtitle && subtitle) {{
-                statusSubtitle.textContent = subtitle;
-            }}
-            
-            // Remove all status classes
-            statusContainer.classList.remove('info', 'success', 'error');
-            // Add the appropriate class
-            statusContainer.classList.add(type);
-            
-            // Animate biometric icons based on status
-            const icons = document.querySelectorAll('.biometric-icon');
-            icons.forEach((icon, index) => {{
-                setTimeout(() => {{
-                    if (type === 'info' && message.includes('biometric')) {{
-                        icon.classList.add('active');
-                    }} else {{
-                        icon.classList.remove('active');
-                    }}
-                }}, index * 200);
-            }});
-        }}
-        
-        function showSuccess(message, subtitle = 'האימות הושלם בהצלחה') {{
-            showStatus(message, subtitle, 'success');
-            
-            const button = document.getElementById('verifyBtn');
-            button.innerHTML = '✓ הזהות אומתה';
-            button.disabled = true;
-            
-            // Celebrate with all icons active
-            document.querySelectorAll('.biometric-icon').forEach(icon => {{
-                icon.classList.add('active');
-            }});
-        }}
-        
-        function showError(message, subtitle = 'אנא נסה שוב') {{
-            showStatus(message, subtitle, 'error');
-            document.getElementById('verifyBtn').disabled = false;
-        }}
-        
-        async function startVerification() {{
-            if (!window.PublicKeyCredential) {{
-                showError('אימות ביומטרי לא נתמך', 'המכשיר הזה לא תומך באימות ביומטרי');
-                return;
-            }}
-            
-            // Mobile-first: Check if running on mobile device
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-            if (!isMobile) {{
-                // Desktop user - show mobile link
-                showMobileLink();
-                return;
-            }}
-            
-            showStatus('מכין אימות ביומטרי...', 'מתחבר לשרת מאובטח');
-            document.getElementById('verifyBtn').disabled = true;
-            
-            try {{
-                // Get WebAuthn options from server
-                const optionsResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/options?token={token}`);
-                if (!optionsResponse.ok) {{
-                    throw new Error('החיבור לשרת נכשל');
-                }}
-                
-                const options = await optionsResponse.json();
-                
-                // Convert base64url to ArrayBuffer for WebAuthn
-                function base64urlToBuffer(base64url) {{
-                    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-                    const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
-                    const binary = atob(padded);
-                    const buffer = new ArrayBuffer(binary.length);
-                    const view = new Uint8Array(buffer);
-                    for (let i = 0; i < binary.length; i++) {{
-                        view[i] = binary.charCodeAt(i);
-                    }}
-                    return buffer;
-                }}
-                
-                function bufferToBase64url(buffer) {{
-                    const binary = String.fromCharCode(...new Uint8Array(buffer));
-                    const base64 = btoa(binary);
-                    return base64.replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '');
-                }}
-                
-                // If this is registration (new user)
-                if (options.isRegistration) {{
-                    const publicKeyCredentialCreationOptions = {{
-                        challenge: base64urlToBuffer(options.challenge),
-                        rp: options.rp,
-                        user: {{
-                            ...options.user,
-                            id: base64urlToBuffer(options.user.id)
-                        }},
-                        pubKeyCredParams: options.pubKeyCredParams,
-                        authenticatorSelection: options.authenticatorSelection,
-                        timeout: 60000,
-                        attestation: options.attestation || 'none'
-                    }};
-                    
-                    showStatus('השלם אימות ביומטרי', 'גע בחיישן טביעת האצבע או השתמש ב-Face ID', 'info');
-                    const credential = await navigator.credentials.create({{
-                        publicKey: publicKeyCredentialCreationOptions
-                    }});
-                    
-                    // Send registration result to server
-                    const registrationResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/register`, {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            token: token,
-                            credential: {{
-                                id: credential.id,
-                                rawId: bufferToBase64url(credential.rawId),
-                                type: credential.type,
-                                response: {{
-                                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-                                    attestationObject: bufferToBase64url(credential.response.attestationObject)
-                                }}
-                            }}
-                        }})
-                    }});
-                    
-                    if (registrationResponse.ok) {{
-                        showSuccess('הזהות אומתה בהצלחה!', 'הרישום הביומטרי שלך נרשם בהצלחה');
-                        // Update server that verification is complete
-                        await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ token: token }})
-                        }});
-                    }} else {{
-                        const errorData = await registrationResponse.json();
-                        const serverError = errorData.error || 'רישום הרישום הביומטרי נכשל';
-                        throw new Error(serverError);
-                    }}
-                }} else {{
-                    // Authentication for existing user
-                    const publicKeyCredentialRequestOptions = {{
-                        challenge: base64urlToBuffer(options.challenge),
-                        allowCredentials: options.allowCredentials ? options.allowCredentials.map(cred => ({{
-                            ...cred,
-                            id: base64urlToBuffer(cred.id)
-                        }})) : [],
-                        userVerification: options.userVerification || 'required',
-                        timeout: 60000
-                    }};
-                    
-                    showStatus('אמת בביומטריה', 'השתמש בטביעת האצבע הרשומה או ב-Face ID', 'info');
-                    const credential = await navigator.credentials.get({{
-                        publicKey: publicKeyCredentialRequestOptions
-                    }});
-                    
-                    // Send authentication result to server
-                    const authResponse = await fetch(`https://webauthn-investor.azurewebsites.net/api/webauthn/authenticate`, {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            token: token,
-                            credential: {{
-                                id: credential.id,
-                                rawId: bufferToBase64url(credential.rawId),
-                                type: credential.type,
-                                response: {{
-                                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-                                    authenticatorData: bufferToBase64url(credential.response.authenticatorData),
-                                    signature: bufferToBase64url(credential.response.signature),
-                                    userHandle: credential.response.userHandle ? bufferToBase64url(credential.response.userHandle) : null
-                                }}
-                            }}
-                        }})
-                    }});
-                    
-                    if (authResponse.ok) {{
-                        showSuccess('ברוך השב!', 'האימות הושלם בהצלחה');
-                        // Update server that verification is complete
-                        await fetch(`https://webauthn-investor.azurewebsites.net/api/verification/complete`, {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ token: token }})
-                        }});
-                    }} else {{
-                        throw new Error('אימות הזהות נכשל');
-                    }}
-                }}
-                
-            }} catch (error) {{
-                console.error('WebAuthn error:', error);
-                if (error.name === 'NotAllowedError') {{
-                    showError('האימות בוטל', 'ביטלת את האימות הביומטרי');
-                }} else if (error.name === 'InvalidStateError') {{
-                    showError('המכשיר לא מוכן', 'אנא וודא שהאימות הביומטרי מופעל');
-                }} else {{
-                    showError('האימות נכשל', error.message);
-                }}
-                document.getElementById('verifyBtn').disabled = false;
-            }}
-        }}
-        
-        function showMobileLink() {{
-            const currentUrl = window.location.href;
-            const qrSection = document.getElementById('qrSection');
-            const qrCodeDiv = document.getElementById('qrcode');
-            
-            // Show the section
-            qrSection.classList.add('show');
-            
-            // Simple mobile link display
-            qrCodeDiv.innerHTML = `
-                <div style="padding: 30px; background: #f0f9ff; border: 3px solid #303e90; border-radius: 16px; color: #303e90; text-align: center; line-height: 1.6;">
-                    <div style="font-size: 24px; margin-bottom: 20px;">📱</div>
-                    <div style="font-size: 18px; font-weight: 600; margin-bottom: 16px;">פתח בטלפון הנייד שלך</div>
-                    <a href="${{currentUrl}}" target="_blank" style="display: inline-block; background: #303e90; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px; margin: 10px 0;">
-                        פתח את הקישור בטלפון
-                    </a>
-                    <div style="margin-top: 16px; font-size: 14px; opacity: 0.8;">
-                        או העתק את הקישור ושלח לעצמך בהודעה
-                    </div>
-                    <div style="margin-top: 12px; padding: 12px; background: white; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; color: #666; border: 1px solid #e5e7eb;">
-                        ${{currentUrl}}
-                    </div>
-                </div>
-            `;
-            
-            // Update status and hide verification button
-            showStatus('פתח את הקישור בטלפון הנייד', 'השתמש בכפתור או העתק את הקישור למטה', 'info');
-            document.getElementById('verifyBtn').style.display = 'none';
-        }}
-        
-        // Initialize
-        showStatus('מוכן לאימות הזהות שלך', 'הקש על הכפתור למטה כדי להתחיל');
-    </script>
-</body>
-</html>
-    '''
-    
-    return func.HttpResponse(
-        html_content,
-        headers={"Content-Type": "text/html"}
-    )
+    except Exception as e:
+        logging.error(f"Error in verification page: {str(e)}")
+        return func.HttpResponse(
+            template_service.render_error_page(
+                error_message="שגיאה בטעינת עמוד האימות",
+                error_details=str(e)
+            ),
+            status_code=500,
+            headers={"Content-Type": "text/html"}
+        )
 
 @app.route(route="api/verification/status", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
@@ -1100,7 +482,9 @@ def debug_credentials(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/webauthn/options", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
+    """Generate WebAuthn options - now uses WebAuthnService (Clean Architecture Phase 2)"""
     try:
+        # Validate token and get session
         token = req.params.get('token')
         if not token:
             return func.HttpResponse(
@@ -1125,11 +509,31 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        user_id_db = session['user_id']
         challenge = session['challenge']
-        verified = session['verified']
-        expires_at = session['expires_at'].isoformat() if hasattr(session['expires_at'], 'isoformat') else session['expires_at']
         credentials = get_user_credentials(user_id)
+        
+        # Use WebAuthn service to generate options
+        if webauthn_service.has_existing_credentials(user_id):
+            # Existing user - authentication options
+            options_data = webauthn_service.generate_authentication_options(user_id, credentials)
+            response_data = {
+                **options_data["options"],
+                "isRegistration": False
+            }
+        else:
+            # New user - registration options
+            username = session.get('username', user_id)
+            options_data = webauthn_service.generate_registration_options(user_id, username, credentials)
+            response_data = {
+                **options_data["options"],
+                "isRegistration": True
+            }
+        
+        return func.HttpResponse(
+            json.dumps(response_data),
+            headers={"Content-Type": "application/json"}
+        )
+        
     except Exception as e:
         logging.error(f"WebAuthn options error: {str(e)}")
         return func.HttpResponse(
@@ -1137,71 +541,16 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             headers={"Content-Type": "application/json"}
         )
-    
-    try:
-        if credentials:
-            # Existing user - authentication
-            response_data = {
-                "challenge": challenge,
-                "allowCredentials": [
-                    {"id": cred[0], "type": "public-key"}
-                    for cred in credentials
-                ],
-                "userVerification": "required",
-                "isRegistration": False
-            }
-            return func.HttpResponse(
-                json.dumps(response_data),
-                headers={"Content-Type": "application/json"}
-            )
-        else:
-            # New user - registration
-            try:
-                user_id_b64 = base64.b64encode(user_id.encode()).decode()
-                logging.info(f"User ID base64: {user_id_b64}")
-            except Exception as b64_error:
-                logging.error(f"Base64 encoding error: {str(b64_error)}")
-                return func.HttpResponse(
-                    json.dumps({"error": f"Base64 encoding failed: {str(b64_error)}"}),
-                    status_code=500,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-            response_data = {
-                "challenge": challenge,
-                "rp": {"id": RP_ID, "name": "Investor Verification"},
-                "user": {
-                    "id": user_id_b64,
-                    "name": user_id,
-                    "displayName": user_id
-                },
-                "pubKeyCredParams": [{"alg": -7, "type": "public-key"}],
-                "authenticatorSelection": {
-                    "authenticatorAttachment": "platform",
-                    "userVerification": "required"
-                },
-                "attestation": "none",
-                "isRegistration": True
-            }
-            return func.HttpResponse(
-                json.dumps(response_data),
-                headers={"Content-Type": "application/json"}
-            )
-    except Exception as response_error:
-        logging.error(f"WebAuthn options response error: {str(response_error)}")
-        return func.HttpResponse(
-            json.dumps({"error": f"Response generation failed: {str(response_error)}"}),
-            status_code=500,
-            headers={"Content-Type": "application/json"}
-        )
 
 @app.route(route="api/webauthn/register", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
+    """WebAuthn registration - now uses WebAuthnService (Clean Architecture Phase 2)"""
     try:
         req_body = req.get_json()
         token = req_body.get('token')
         credential_data = req_body.get('credential')
         
+        # Validate token and session
         user_id = verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
@@ -1218,116 +567,31 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        # REAL WebAuthn verification - SECURITY FIX  
-        try:
-            # Get session challenge for verification
-            session_data = get_session(token)
-            if not session_data:
-                return func.HttpResponse(
-                    json.dumps({"error": "Session not found or expired"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            user_id_db = session_data['user_id']
-            challenge_b64 = session_data['challenge']
-            verified = session_data['verified']
-            expires_at = session_data['expires_at'].isoformat() if hasattr(session_data['expires_at'], 'isoformat') else session_data['expires_at']
-            if not challenge_b64:
-                return func.HttpResponse(
-                    json.dumps({"error": "Session challenge not found"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Validate credential data structure
-            if not credential_data or "response" not in credential_data:
-                return func.HttpResponse(
-                    json.dumps({"error": "Invalid credential data"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-            response_data = credential_data["response"]
-            if "clientDataJSON" not in response_data or "attestationObject" not in response_data:
-                return func.HttpResponse(
-                    json.dumps({"error": "Missing required credential response fields"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Convert credential data to proper WebAuthn format
-            try:
-                client_data_json = base64url_decode(response_data["clientDataJSON"])
-                attestation_object = base64url_decode(response_data["attestationObject"])
-                logging.info(f"Decoded clientDataJSON: {len(client_data_json)} bytes")
-                logging.info(f"Decoded attestationObject: {len(attestation_object)} bytes")
-                
-                attestation_response = AuthenticatorAttestationResponse(
-                    client_data_json=client_data_json,
-                    attestation_object=attestation_object
-                )
-            except Exception as e:
-                logging.error(f"Base64URL decode error: {str(e)}")
-                logging.error(f"clientDataJSON: {response_data.get('clientDataJSON', 'missing')[:100]}...")
-                logging.error(f"attestationObject: {response_data.get('attestationObject', 'missing')[:100]}...")
-                return func.HttpResponse(
-                    json.dumps({"error": f"Invalid credential data encoding: {str(e)}"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Use rawId as id if id is missing (common browser behavior)
-            cred_id = credential_data.get("id", credential_data.get("rawId", ""))
-            if not cred_id:
-                return func.HttpResponse(
-                    json.dumps({"error": "Missing credential ID"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            credential = RegistrationCredential(
-                id=cred_id,
-                raw_id=base64url_decode(credential_data.get("rawId", cred_id)),
-                response=attestation_response,
-                type=credential_data.get("type", "public-key")
+        challenge = session['challenge']
+        
+        # Use WebAuthn service for verification
+        verification_result = webauthn_service.verify_registration_response(
+            user_id, challenge, credential_data
+        )
+        
+        if verification_result["verified"]:
+            # Save verified credential
+            webauthn_service.save_verified_credential(
+                user_id,
+                verification_result["credential_id"],
+                verification_result["public_key"]
             )
             
-            # ACTUAL WebAuthn verification (not fake!)
-            verification = verify_registration_response(
-                credential=credential,
-                expected_challenge=base64.b64decode(challenge_b64),
-                expected_origin=ORIGIN,
-                expected_rp_id=RP_ID,
-                require_user_verification=True
-            )
-            
-            # For WebAuthn library 2.2.0, if verification succeeds, we get the result
-            # If it fails, an exception is thrown, so we're here means success
-            
-            # Save REAL credential data
-            credential_id_b64 = base64.b64encode(verification.credential_id).decode()
-            public_key_b64 = base64.b64encode(verification.credential_public_key).decode()
-            save_credential(user_id, credential_id_b64, public_key_b64)
-            
-        except Exception as verification_error:
-            error_msg = str(verification_error)
-            logging.error(f"WebAuthn verification failed: {error_msg}")
-            logging.error(f"Credential data: {json.dumps(credential_data, indent=2)}")
-            logging.error(f"Challenge: {challenge_b64}")
-            logging.error(f"Expected origin: {ORIGIN}")
-            logging.error(f"Expected RP ID: {RP_ID}")
-            
-            # Return detailed error for debugging temporarily
             return func.HttpResponse(
-                json.dumps({"error": f"DEBUG: {error_msg}"}),
+                json.dumps({"success": True}),
+                headers={"Content-Type": "application/json"}
+            )
+        else:
+            return func.HttpResponse(
+                json.dumps({"error": verification_result["error"]}),
                 status_code=400,
                 headers={"Content-Type": "application/json"}
             )
-        
-        return func.HttpResponse(
-            json.dumps({"success": True}),
-            headers={"Content-Type": "application/json"}
-        )
         
     except Exception as e:
         logging.error(f"Registration error: {str(e)}")
@@ -1339,12 +603,13 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="api/webauthn/authenticate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def webauthn_authenticate(req: func.HttpRequest) -> func.HttpResponse:
+    """WebAuthn authentication - now uses WebAuthnService (Clean Architecture Phase 2)"""
     try:
         req_body = req.get_json()
         token = req_body.get('token')
         credential_data = req_body.get('credential')
-        logging.info(f"Received credential data: {json.dumps(credential_data, indent=2) if credential_data else 'None'}")
         
+        # Validate token and session
         user_id = verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
@@ -1353,102 +618,43 @@ def webauthn_authenticate(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        # REAL WebAuthn authentication - SECURITY FIX
-        try:
-            # Get session challenge and user credentials
-            session = get_session(token)
-            if not session:
-                return func.HttpResponse(
-                    json.dumps({"error": "Session not found"}),
-                    status_code=404,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            user_id_db = session['user_id']
-            challenge_b64 = session['challenge']
-            verified = session['verified']
-            expires_at = session['expires_at'].isoformat() if hasattr(session['expires_at'], 'isoformat') else session['expires_at']
-            credentials = get_user_credentials(user_id)
-            logging.info(f"Retrieved credentials for user {user_id}: {credentials}")
-            
-            if not credentials:
-                logging.error(f"No credentials found for user {user_id}")
-                return func.HttpResponse(
-                    json.dumps({"error": "No registered credentials found"}),
-                    status_code=404,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Convert credential data to proper WebAuthn format
-            assertion_response = AuthenticatorAssertionResponse(
-                client_data_json=base64url_decode(credential_data["response"]["clientDataJSON"]),
-                authenticator_data=base64url_decode(credential_data["response"]["authenticatorData"]),
-                signature=base64url_decode(credential_data["response"]["signature"]),
-                user_handle=base64url_decode(credential_data["response"]["userHandle"]) if credential_data["response"].get("userHandle") else None
+        session = get_session(token)
+        if not session:
+            return func.HttpResponse(
+                json.dumps({"error": "Session not found"}),
+                status_code=404,
+                headers={"Content-Type": "application/json"}
             )
-            
-            credential = AuthenticationCredential(
-                id=credential_data["id"],
-                raw_id=base64url_decode(credential_data["rawId"]),
-                response=assertion_response,
-                type=credential_data["type"]
+        
+        challenge = session['challenge']
+        credentials = get_user_credentials(user_id)
+        
+        if not credentials:
+            return func.HttpResponse(
+                json.dumps({"error": "No registered credentials found"}),
+                status_code=404,
+                headers={"Content-Type": "application/json"}
             )
-            
-            # Find matching credential from database
-            # The credential ID is already base64-encoded in our storage
-            credential_id_b64 = credential_data["id"]  # Use the ID as sent by the client
-            logging.info(f"Looking for credential ID: '{credential_id_b64}' (length: {len(credential_id_b64)})")
-            logging.info(f"Available stored credentials: {[(cred[0], len(cred[0])) for cred in credentials if len(cred) >= 1]}")
-            
-            matching_cred = None
-            for cred in credentials:
-                if len(cred) >= 2:
-                    stored_id = cred[0]
-                    logging.info(f"Comparing '{credential_id_b64}' == '{stored_id}': {credential_id_b64 == stored_id}")
-                    if stored_id == credential_id_b64:  # credential_id, public_key, sign_count
-                        matching_cred = cred
-                        break
-            
-            if not matching_cred:
-                logging.error(f"Credential {credential_id_b64} not found for user {user_id_db}. Available credentials: {[cred[0] for cred in credentials if len(cred) >= 1]}")
-                return func.HttpResponse(
-                    json.dumps({"error": "Credential not registered for this user"}),
-                    status_code=404,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            credential_id_found, public_key_b64, current_sign_count = matching_cred[0], matching_cred[1], matching_cred[2] if len(matching_cred) > 2 else 0
-            
-            # ACTUAL WebAuthn authentication verification (not fake!)
-            verification = verify_authentication_response(
-                credential=credential,
-                expected_challenge=base64.b64decode(challenge_b64),
-                expected_origin=ORIGIN,
-                expected_rp_id=RP_ID,
-                credential_public_key=base64.b64decode(public_key_b64),
-                credential_current_sign_count=current_sign_count,
-                require_user_verification=True
+        
+        # Use WebAuthn service for verification
+        verification_result = webauthn_service.verify_authentication_response(
+            user_id, challenge, credential_data, credentials
+        )
+        
+        if verification_result["verified"]:
+            # Update sign count for replay protection
+            webauthn_service.update_credential_sign_count(
+                verification_result["credential_id"],
+                verification_result["new_sign_count"]
             )
-            
-            if not verification.verified:
-                return func.HttpResponse(
-                    json.dumps({"error": "Authentication verification failed"}),
-                    status_code=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Update sign count (prevents replay attacks)
-            update_sign_count(credential_id_b64, verification.new_sign_count)
             
             return func.HttpResponse(
                 json.dumps({"success": True, "verified": True}),
                 headers={"Content-Type": "application/json"}
             )
-            
-        except Exception as auth_error:
-            logging.error(f"WebAuthn authentication failed: {str(auth_error)}")
+        else:
             return func.HttpResponse(
-                json.dumps({"error": f"Authentication failed: {str(auth_error)}"}),
+                json.dumps({"error": verification_result["error"]}),
                 status_code=400,
                 headers={"Content-Type": "application/json"}
             )
