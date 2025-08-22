@@ -129,6 +129,7 @@ class WebAuthnService:
                     for cred in options.exclude_credentials
                 ],
                 "authenticatorSelection": {
+                    "authenticatorAttachment": options.authenticator_selection.authenticator_attachment.value,
                     "userVerification": options.authenticator_selection.user_verification.value
                 },
                 "timeout": options.timeout
