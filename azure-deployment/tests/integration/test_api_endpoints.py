@@ -73,7 +73,7 @@ class TestAPIEndpoints:
         
         mock_req = self.create_mock_request(
             method="POST",
-            json_data={"user_id": "test_user", "username": "Test User"}
+            json_data={"user_id": "test_user"}
         )
         
         response = create_verification_link(mock_req)
@@ -181,8 +181,7 @@ class TestAPIEndpoints:
         mock_session.get_session.return_value = {
             "user_id": "test_user",
             "challenge": "session_challenge",
-            "verified": False,
-            "username": "Test User"
+            "verified": False
         }
         mock_webauthn.has_existing_credentials.return_value = False
         mock_webauthn.generate_registration_options.return_value = {
@@ -220,7 +219,7 @@ class TestAPIEndpoints:
         
         mock_req = self.create_mock_request(
             method="POST",
-            json_data={"user_id": "test_user", "username": "Test User"}
+            json_data={"user_id": "test_user"}
         )
         
         response = create_verification_link(mock_req)
@@ -244,7 +243,7 @@ class TestAPIEndpoints:
         
         mock_req = self.create_mock_request(
             method="POST",
-            json_data={"user_id": "<script>alert('xss')</script>", "username": "Test User"}
+            json_data={"user_id": "<script>alert('xss')</script>"}
         )
         
         response = create_verification_link(mock_req)
@@ -315,7 +314,7 @@ class TestAPIEndpoints:
         
         mock_req = self.create_mock_request(
             method="POST",
-            json_data={"user_id": "test_user", "username": "Test User"}
+            json_data={"user_id": "test_user"}
         )
         
         # This should trigger logging calls

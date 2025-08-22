@@ -69,13 +69,12 @@ class WebAuthnService:
         """Encode bytes to base64url string."""
         return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
     
-    def generate_registration_options(self, user_id: str, username: str, existing_credentials: List[Tuple[str, str, int]] = None) -> Dict:
+    def generate_registration_options(self, user_id: str, existing_credentials: List[Tuple[str, str, int]] = None) -> Dict:
         """
         Generate WebAuthn registration options for new credential.
         
         Args:
             user_id: User identifier
-            username: User display name
             existing_credentials: List of existing credentials to exclude
             
         Returns:
@@ -99,8 +98,8 @@ class WebAuthnService:
                 rp_id=self.rp_id,
                 rp_name=self.rp_name,
                 user_id=user_id.encode('utf-8'),
-                user_name=username,
-                user_display_name=username,
+                user_name=user_id,  # Use user_id as name (minimal approach)
+                user_display_name=user_id,  # Use user_id as display name
                 exclude_credentials=exclude_credentials,
                 authenticator_selection=AuthenticatorSelectionCriteria(
                     authenticator_attachment=AuthenticatorAttachment.PLATFORM,  # Force "This Device" 

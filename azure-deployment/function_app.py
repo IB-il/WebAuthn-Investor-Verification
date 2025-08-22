@@ -114,14 +114,12 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
         # Support both GET and POST methods
         if req.method == "GET":
             user_id = req.params.get('user_id')
-            username = req.params.get('username')
         else:
             req_body = req.get_json()
             user_id = req_body.get('user_id')
-            username = req_body.get('username')
         
-        # SECURITY FIX: Input validation
-        is_valid, validation_error = auth_service.validate_user_input(user_id, username)
+        # SECURITY FIX: Input validation (minimal approach - user_id only)
+        is_valid, validation_error = auth_service.validate_user_input(user_id)
         if not is_valid:
             auth_service.log_security_event("INVALID_INPUT", user_id, client_ip, validation_error)
             return func.HttpResponse(
@@ -137,7 +135,7 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
             # Existing user - authentication
             credentials = storage_service.get_user_credentials(user_id)
             options_data = webauthn_service.generate_authentication_options(user_id, credentials)
-            session_service.create_session(user_id, token, options_data["challenge"], username)
+            session_service.create_session(user_id, token, options_data["challenge"])
             auth_service.log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "Existing user authentication")
             
             return func.HttpResponse(
@@ -151,8 +149,8 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
         else:
             # New user - registration  
             credentials = storage_service.get_user_credentials(user_id)
-            options_data = webauthn_service.generate_registration_options(user_id, username, credentials)
-            session_service.create_session(user_id, token, options_data["challenge"], username)
+            options_data = webauthn_service.generate_registration_options(user_id, credentials)
+            session_service.create_session(user_id, token, options_data["challenge"])
             auth_service.log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "New user registration")
             
             return func.HttpResponse(
@@ -403,8 +401,7 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
             }
         else:
             # New user - registration options
-            username = session.get('username', user_id)
-            options_data = webauthn_service.generate_registration_options(user_id, username, credentials)
+            options_data = webauthn_service.generate_registration_options(user_id, credentials)
             response_data = {
                 **options_data["options"],
                 "isRegistration": True

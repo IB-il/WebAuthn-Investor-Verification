@@ -232,8 +232,7 @@ class AzureStorageService:
                     'user_id': session_data.get('user_id', ''),
                     'challenge': session_data.get('challenge', ''),
                     'verified': session_data.get('verified', False),
-                    'expires_at': expires_at_str,
-                    'username': session_data.get('username', '')
+                    'expires_at': expires_at_str
                 }
                 
                 table_client.upsert_entity(entity)
@@ -245,7 +244,7 @@ class AzureStorageService:
             raise
     
     def save_session(self, token: str, user_id: str, challenge: str, 
-                     expires_at: datetime, username: str = "", verified: bool = False) -> None:
+                     expires_at: datetime, verified: bool = False) -> None:
         """
         Save single session to Azure Table Storage.
         
@@ -254,7 +253,6 @@ class AzureStorageService:
             user_id: User identifier
             challenge: WebAuthn challenge (base64)
             expires_at: Session expiration datetime
-            username: User display name
             verified: Whether session is verified
         """
         if not self.is_available():
@@ -269,8 +267,7 @@ class AzureStorageService:
                 'user_id': user_id,
                 'challenge': challenge,
                 'verified': verified,
-                'expires_at': expires_at.isoformat(),
-                'username': username
+                'expires_at': expires_at.isoformat()
             }
             
             table_client.upsert_entity(entity)

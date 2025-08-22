@@ -83,8 +83,7 @@ class TestSessionService:
         result = session_service.create_session(
             user_id="test_user",
             token="test_token", 
-            challenge="test_challenge",
-            username="Test User"
+            challenge="test_challenge"
         )
         
         assert result is True
@@ -95,7 +94,6 @@ class TestSessionService:
         assert kwargs["token"] == "test_token"
         assert kwargs["user_id"] == "test_user"
         assert kwargs["challenge"] == "test_challenge"
-        assert kwargs["username"] == "Test User"
         assert kwargs["verified"] is False
     
     def test_create_session_failure(self, session_service, mock_storage_service):
@@ -273,8 +271,7 @@ class TestSessionService:
             "user_id": "test_user",
             "challenge": "test_challenge", 
             "verified": False,
-            "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-            "username": "Test User"
+            "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         }
         
         is_expired = session_service._is_session_expired(mock_session)
@@ -290,8 +287,7 @@ class TestSessionService:
             "user_id": "test_user",
             "challenge": "test_challenge",
             "verified": False, 
-            "expires_at": expired_time,  # No timezone
-            "username": "Test User"
+            "expires_at": expired_time  # No timezone
         }
         
         is_expired = session_service._is_session_expired(mock_session)
@@ -305,8 +301,7 @@ class TestSessionService:
         mock_session = {
             "user_id": "test_user",
             "challenge": "test_challenge",
-            "verified": False,
-            "username": "Test User"
+            "verified": False
             # No expires_at field
         }
         

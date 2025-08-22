@@ -149,28 +149,28 @@ class TestAuthService:
     
     def test_validate_user_input_valid(self, auth_service):
         """Test user input validation with valid data."""
-        is_valid, error = auth_service.validate_user_input("test_user_123", "Test User")
+        is_valid, error = auth_service.validate_user_input("test_user_123")
         
         assert is_valid is True
         assert error is None
     
     def test_validate_user_input_empty_user_id(self, auth_service):
         """Test user input validation with empty user ID."""
-        is_valid, error = auth_service.validate_user_input("", "Test User")
+        is_valid, error = auth_service.validate_user_input("")
         
         assert is_valid is False
         assert "User ID is required and must be a string" in error
     
-    def test_validate_user_input_empty_username(self, auth_service):
-        """Test user input validation with empty username."""
-        is_valid, error = auth_service.validate_user_input("test_user", "")
+    def test_validate_user_input_user_id_only(self, auth_service):
+        """Test user input validation with user_id only (minimal approach)."""
+        is_valid, error = auth_service.validate_user_input("test_user")
         
-        assert is_valid is False
-        assert "Username is required and must be a string" in error
+        assert is_valid is True
+        assert error is None
     
     def test_validate_user_input_none_values(self, auth_service):
         """Test user input validation with None values."""
-        is_valid, error = auth_service.validate_user_input(None, None)
+        is_valid, error = auth_service.validate_user_input(None)
         
         assert is_valid is False
         assert "required and must be a string" in error
@@ -178,7 +178,7 @@ class TestAuthService:
     def test_validate_user_input_too_long(self, auth_service):
         """Test user input validation with oversized data."""
         long_user_id = "x" * 101
-        is_valid, error = auth_service.validate_user_input(long_user_id, "Test User")
+        is_valid, error = auth_service.validate_user_input(long_user_id)
         
         assert is_valid is False
         assert "too long" in error
@@ -186,25 +186,23 @@ class TestAuthService:
     def test_validate_user_input_suspicious_characters(self, auth_service, malicious_input_data):
         """Test user input validation with suspicious characters."""
         is_valid, error = auth_service.validate_user_input(
-            malicious_input_data["xss_script"], 
-            "Test User"
+            malicious_input_data["xss_script"]
         )
         
         assert is_valid is False
         assert "invalid characters" in error
     
-    def test_validate_user_input_short_username(self, auth_service):
-        """Test user input validation with too short username."""
-        is_valid, error = auth_service.validate_user_input("test_user", "x")
+    def test_validate_user_input_short_user_id(self, auth_service):
+        """Test user input validation with valid short user_id."""
+        is_valid, error = auth_service.validate_user_input("x")
         
-        assert is_valid is False
-        assert "at least 2 characters" in error
+        assert is_valid is True
+        assert error is None
     
     def test_validate_user_input_hebrew_text(self, auth_service, hebrew_test_data):
         """Test user input validation with Hebrew text."""
         is_valid, error = auth_service.validate_user_input(
-            hebrew_test_data["user_id"],
-            hebrew_test_data["username"]
+            hebrew_test_data["user_id"]
         )
         
         # Hebrew text should be valid (assuming no suspicious characters)
@@ -214,7 +212,7 @@ class TestAuthService:
     def test_validate_user_input_exception_handling(self, auth_service):
         """Test user input validation exception handling."""
         # Pass non-string types to trigger exception
-        is_valid, error = auth_service.validate_user_input(123, 456)
+        is_valid, error = auth_service.validate_user_input(123)
         
         assert is_valid is False
         assert "must be a string" in error

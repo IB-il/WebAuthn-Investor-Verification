@@ -45,8 +45,7 @@ def mock_session_with_user():
         "user_id": "test_user_123",
         "challenge": "mock_challenge_base64url",
         "verified": False,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
-        "username": "Test User"
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15)
     }
 
 
@@ -57,8 +56,7 @@ def mock_verified_session():
         "user_id": "verified_user_123",
         "challenge": "verified_challenge_base64url",
         "verified": True,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
-        "username": "Verified User"
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)
     }
 
 
@@ -69,8 +67,7 @@ def mock_expired_session():
         "user_id": "expired_user_123",
         "challenge": "expired_challenge_base64url",
         "verified": False,
-        "expires_at": datetime.now(timezone.utc) - timedelta(minutes=5),
-        "username": "Expired User"
+        "expires_at": datetime.now(timezone.utc) - timedelta(minutes=5)
     }
 
 
@@ -124,7 +121,7 @@ def mock_http_request():
         "Content-Type": "application/json",
         "X-Forwarded-For": "192.168.1.100"
     }
-    mock_req.get_json.return_value = {"user_id": "test_user", "username": "Test User"}
+    mock_req.get_json.return_value = {"user_id": "test_user"}
     return mock_req
 
 
@@ -202,7 +199,7 @@ def hebrew_test_data():
     """Hebrew text data for testing."""
     return {
         "user_id": "משתמש_בדיקה",
-        "username": "משתמש בדיקה בעברית",
+        "display_name": "משתמש בדיקה בעברית",
         "display_name": "משתמש לבדיקות",
         "error_message": "שגיאה במערכת",
         "success_message": "הפעולה הושלמה בהצלחה"
