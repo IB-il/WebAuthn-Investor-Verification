@@ -410,6 +410,17 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 "isRegistration": True
             }
         
+        # CRITICAL FIX: Update session with the new challenge from WebAuthn options
+        # The session needs to store the challenge that was sent to the client
+        new_challenge = options_data.get("challenge")
+        if new_challenge:
+            # Update the session's challenge to match what the client will sign
+            session_data = session_service.get_session(token)
+            if session_data:
+                # Update session with new challenge
+                storage_service.update_session_challenge(token, new_challenge)
+                logging.info(f"Updated session challenge for token: {token[:8]}... with new challenge from WebAuthn options")
+        
         return func.HttpResponse(
             json.dumps(response_data),
             headers={"Content-Type": "application/json"}
