@@ -23,6 +23,8 @@ from azure.data.tables import TableServiceClient
 from lib.services.storage_service import AzureStorageService
 from lib.services.webauthn_service import WebAuthnService
 from lib.services.template_service import TemplateService
+from lib.services.session_service import SessionService
+from lib.services.auth_service import AuthService
 
 # Configuration
 RP_ID = os.getenv("RP_ID", "webauthn-investor.azurewebsites.net")
@@ -34,11 +36,13 @@ JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
 # SECURITY FIX: Admin API authentication
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin-key-d8f9e7a6b5c4d3e2f1")
 
-# Initialize Services (Clean Architecture Phase 1, 2 & 3)
+# Initialize Services (Clean Architecture Phase 1, 2, 3 & 4)
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
 storage_service = AzureStorageService(AZURE_STORAGE_CONNECTION_STRING)
 webauthn_service = WebAuthnService(storage_service, RP_ID, ORIGIN)
 template_service = TemplateService()
+session_service = SessionService(storage_service, JWT_SECRET, JWT_TTL_SECONDS)
+auth_service = AuthService(ADMIN_API_KEY)
 
 # Production: Pure Azure Table Storage only
 # No fallback storage for production deployment
@@ -64,8 +68,7 @@ def save_sessions(data):
 credentials_db = load_credentials()
 sessions_db = load_sessions()
 
-# SECURITY FIX: Rate limiting storage
-rate_limit_db = {}  # IP -> {count, reset_time}
+# Rate limiting now handled by AuthService (Clean Architecture Phase 4)
 
 app = func.FunctionApp()
 
@@ -76,20 +79,7 @@ def base64url_decode(data: str) -> bytes:
         data += '=' * padding
     return base64.b64decode(data)
 
-def generate_jwt_token(user_id: str) -> str:
-    payload = {
-        "user_id": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(seconds=JWT_TTL_SECONDS),
-        "iat": datetime.now(timezone.utc)
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-
-def verify_jwt_token(token: str) -> Optional[str]:
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id")
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-        return None
+# JWT functions now handled by SessionService (Clean Architecture Phase 4)
 
 def get_user_credentials(user_id: str):
     """Get user credentials - now uses AzureStorageService (Clean Architecture Phase 1)"""
@@ -105,126 +95,17 @@ def update_sign_count(credential_id: str, new_sign_count: int):
     # For production WebAuthn, sign count is optional
     logging.info(f"Sign count update for credential {credential_id}: {new_sign_count}")
 
-def create_session(user_id: str, token: str, challenge: str, username: str = ""):
-    """Create session - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=JWT_TTL_SECONDS)
-    return storage_service.save_session(token, user_id, challenge, expires_at, username, verified=False)
+# Session functions now handled by SessionService (Clean Architecture Phase 4)
 
-def get_session_data(token: str):
-    """Get session data - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    session = storage_service.get_session_data(token)
-    if session:
-        return (session["user_id"], session["challenge"], session["verified"], session["expires_at"].isoformat())
-    return None
-
-def mark_session_verified(token: str):
-    """Mark session as verified - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.mark_session_verified(token)
-
-def get_session(token: str):
-    """Get session object - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.get_session_data(token)
-
-def verify_admin_auth(req: func.HttpRequest) -> bool:
-    """SECURITY FIX: Verify admin API key authentication"""
-    auth_header = req.headers.get('Authorization')
-    if not auth_header:
-        return False
-    
-    if not auth_header.startswith('Bearer '):
-        return False
-        
-    api_key = auth_header[7:]  # Remove 'Bearer ' prefix
-    return api_key == ADMIN_API_KEY
-
-def check_rate_limit(client_ip: str, max_requests: int = 10, window_minutes: int = 15) -> bool:
-    """SECURITY FIX: Rate limiting to prevent abuse"""
-    import time
-    
-    current_time = time.time()
-    window_start = current_time - (window_minutes * 60)
-    
-    if client_ip not in rate_limit_db:
-        rate_limit_db[client_ip] = {"count": 1, "reset_time": current_time + (window_minutes * 60)}
-        return True
-    
-    rate_data = rate_limit_db[client_ip]
-    
-    # Reset if window expired
-    if current_time > rate_data["reset_time"]:
-        rate_limit_db[client_ip] = {"count": 1, "reset_time": current_time + (window_minutes * 60)}
-        return True
-    
-    # Check if under limit
-    if rate_data["count"] < max_requests:
-        rate_limit_db[client_ip]["count"] += 1
-        return True
-    
-    return False  # Rate limited
-
-def validate_user_input(user_id: str, username: str) -> tuple[bool, str]:
-    """SECURITY FIX: Input validation and sanitization"""
-    import re
-    
-    if not user_id or not username:
-        return False, "user_id and username are required"
-    
-    if len(user_id) > 100 or len(username) > 100:
-        return False, "user_id and username must be under 100 characters"
-    
-    # Allow alphanumeric, underscores, hyphens, dots, @ for email
-    if not re.match(r'^[a-zA-Z0-9._@-]+$', user_id):
-        return False, "user_id contains invalid characters"
-        
-    if not re.match(r'^[a-zA-Z0-9._@\s-]+$', username):
-        return False, "username contains invalid characters"
-    
-    return True, ""
-
-def log_security_event(event_type: str, user_id: str = None, client_ip: str = None, details: str = None):
-    """SECURITY FIX: Enhanced security logging"""
-    timestamp = datetime.now(timezone.utc).isoformat()
-    
-    # Hash sensitive data for privacy
-    user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:8] if user_id else "unknown"
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:8] if client_ip else "unknown"
-    
-    log_entry = {
-        "timestamp": timestamp,
-        "event_type": event_type,
-        "user_hash": user_hash,
-        "ip_hash": ip_hash,
-        "details": details
-    }
-    
-    logging.warning(f"SECURITY_EVENT: {json.dumps(log_entry)}")
-
-def safe_error_response(error_message: str, status_code: int = 400) -> func.HttpResponse:
-    """SECURITY FIX: Sanitized error responses that don't leak information"""
-    # Map internal errors to safe user messages
-    safe_errors = {
-        "WebAuthn verification failed": "Biometric verification failed. Please try again.",
-        "Authentication verification failed": "Authentication failed. Please try again.",
-        "Session not found": "Session expired. Please start over.",
-        "Invalid token": "Session invalid or expired.",
-        "Credential not registered": "Device not recognized. Please register first."
-    }
-    
-    safe_message = safe_errors.get(error_message, "Verification failed. Please try again.")
-    
-    return func.HttpResponse(
-        json.dumps({"error": safe_message}),
-        status_code=status_code,
-        headers={"Content-Type": "application/json"}
-    )
+# Auth and security functions now handled by AuthService (Clean Architecture Phase 4)
 
 @app.route(route="api/verification/link", methods=["POST", "GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
     try:
         # SECURITY FIX: Rate limiting
-        client_ip = req.headers.get('X-Forwarded-For', 'unknown').split(',')[0].strip()
-        if not check_rate_limit(client_ip, max_requests=5, window_minutes=15):
-            log_security_event("RATE_LIMIT_EXCEEDED", None, client_ip, "Too many verification requests")
+        client_ip = auth_service.get_client_ip(req)
+        if not auth_service.check_rate_limit(client_ip, max_requests=5, window_minutes=15):
+            auth_service.log_security_event("RATE_LIMIT_EXCEEDED", None, client_ip, "Too many verification requests")
             return func.HttpResponse(
                 json.dumps({"error": "Rate limit exceeded - too many requests"}),
                 status_code=429,
@@ -240,24 +121,24 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
             username = req_body.get('username')
         
         # SECURITY FIX: Input validation
-        is_valid, validation_error = validate_user_input(user_id, username)
+        is_valid, validation_error = auth_service.validate_user_input(user_id, username)
         if not is_valid:
-            log_security_event("INVALID_INPUT", user_id, client_ip, validation_error)
+            auth_service.log_security_event("INVALID_INPUT", user_id, client_ip, validation_error)
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid input: {validation_error}"}),
                 status_code=400,
                 headers={"Content-Type": "application/json"}
             )
         
-        token = generate_jwt_token(user_id)
+        token = session_service.generate_jwt_token(user_id)
         
         # Use WebAuthn service to check for existing credentials and generate options
         if webauthn_service.has_existing_credentials(user_id):
             # Existing user - authentication
             credentials = storage_service.get_user_credentials(user_id)
             options_data = webauthn_service.generate_authentication_options(user_id, credentials)
-            create_session(user_id, token, options_data["challenge"], username)
-            log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "Existing user authentication")
+            session_service.create_session(user_id, token, options_data["challenge"], username)
+            auth_service.log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "Existing user authentication")
             
             return func.HttpResponse(
                 json.dumps({
@@ -271,8 +152,8 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
             # New user - registration  
             credentials = storage_service.get_user_credentials(user_id)
             options_data = webauthn_service.generate_registration_options(user_id, username, credentials)
-            create_session(user_id, token, options_data["challenge"], username)
-            log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "New user registration")
+            session_service.create_session(user_id, token, options_data["challenge"], username)
+            auth_service.log_security_event("VERIFICATION_LINK_CREATED", user_id, client_ip, "New user registration")
             
             return func.HttpResponse(
                 json.dumps({
@@ -284,10 +165,10 @@ def create_verification_link(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
     except Exception as e:
-        log_security_event("VERIFICATION_LINK_ERROR", user_id if 'user_id' in locals() else None, 
+        auth_service.log_security_event("VERIFICATION_LINK_ERROR", user_id if 'user_id' in locals() else None, 
                           client_ip if 'client_ip' in locals() else None, str(e))
         logging.error(f"Error creating verification link: {str(e)}")
-        return safe_error_response("Service temporarily unavailable", 500)
+        return auth_service.create_safe_error_response("Service temporarily unavailable", 500)
 
 @app.route(route="api/verify", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def verification_page(req: func.HttpRequest) -> func.HttpResponse:
@@ -305,7 +186,7 @@ def verification_page(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "text/html"}
             )
         
-        user_id = verify_jwt_token(token)
+        user_id = session_service.verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
                 template_service.render_error_page(
@@ -349,7 +230,7 @@ def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Content-Type": "application/json"}
         )
     
-    user_id = verify_jwt_token(token)
+    user_id = session_service.verify_jwt_token(token)
     if not user_id:
         return func.HttpResponse(
             json.dumps({"error": "Invalid or expired token"}),
@@ -357,7 +238,7 @@ def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Content-Type": "application/json"}
         )
     
-    session = get_session(token)
+    session = session_service.get_session(token)
     if not session:
         return func.HttpResponse(
             json.dumps({"error": "Session not found"}),
@@ -384,7 +265,7 @@ def check_verification_status(req: func.HttpRequest) -> func.HttpResponse:
 def list_users(req: func.HttpRequest) -> func.HttpResponse:
     """List all registered users - SECURITY FIX: Requires authentication"""
     # SECURITY FIX: Require admin authentication
-    if not verify_admin_auth(req):
+    if not auth_service.verify_admin_auth(req):
         return func.HttpResponse(
             json.dumps({"error": "Unauthorized - Admin API key required"}),
             status_code=401,
@@ -413,7 +294,7 @@ def list_users(req: func.HttpRequest) -> func.HttpResponse:
 def list_sessions(req: func.HttpRequest) -> func.HttpResponse:
     """List all verification sessions - SECURITY FIX: Requires authentication"""
     # SECURITY FIX: Require admin authentication
-    if not verify_admin_auth(req):
+    if not auth_service.verify_admin_auth(req):
         return func.HttpResponse(
             json.dumps({"error": "Unauthorized - Admin API key required"}),
             status_code=401,
@@ -493,7 +374,7 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        user_id = verify_jwt_token(token)
+        user_id = session_service.verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid or expired token"}),
@@ -501,7 +382,7 @@ def get_webauthn_options(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        session = get_session(token)
+        session = session_service.get_session(token)
         if not session:
             return func.HttpResponse(
                 json.dumps({"error": "Session not found"}),
@@ -551,7 +432,7 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
         credential_data = req_body.get('credential')
         
         # Validate token and session
-        user_id = verify_jwt_token(token)
+        user_id = session_service.verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid token"}),
@@ -559,7 +440,7 @@ def webauthn_register(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        session = get_session(token)
+        session = session_service.get_session(token)
         if not session:
             return func.HttpResponse(
                 json.dumps({"error": "Session not found"}),
@@ -610,7 +491,7 @@ def webauthn_authenticate(req: func.HttpRequest) -> func.HttpResponse:
         credential_data = req_body.get('credential')
         
         # Validate token and session
-        user_id = verify_jwt_token(token)
+        user_id = session_service.verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid token"}),
@@ -618,7 +499,7 @@ def webauthn_authenticate(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        session = get_session(token)
+        session = session_service.get_session(token)
         if not session:
             return func.HttpResponse(
                 json.dumps({"error": "Session not found"}),
@@ -673,7 +554,7 @@ def complete_verification(req: func.HttpRequest) -> func.HttpResponse:
         req_body = req.get_json()
         token = req_body.get('token')
         
-        user_id = verify_jwt_token(token)
+        user_id = session_service.verify_jwt_token(token)
         if not user_id:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid token"}),
@@ -681,7 +562,7 @@ def complete_verification(req: func.HttpRequest) -> func.HttpResponse:
                 headers={"Content-Type": "application/json"}
             )
         
-        mark_session_verified(token)
+        session_service.mark_session_verified(token)
         return func.HttpResponse(
             json.dumps({"success": True}),
             headers={"Content-Type": "application/json"}
