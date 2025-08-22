@@ -29,7 +29,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "+UEP1oRln/CaVnO6V4rt9I4rqiaDPN/3yB2tv+VOH/
 JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", "900"))
 
 # SECURITY FIX: Admin API authentication
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin_" + os.urandom(32).hex())
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "admin-key-d8f9e7a6b5c4d3e2f1")
 
 # Azure Table Storage configuration
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")

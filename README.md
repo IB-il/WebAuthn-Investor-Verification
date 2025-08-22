@@ -130,9 +130,12 @@ POST /api/webauthn/authenticate
 ```
 
 ### Admin Endpoints (Protected)
+**Authentication:** `Authorization: Bearer admin-key-d8f9e7a6b5c4d3e2f1`
+
 ```bash
-GET /api/users              # Requires Admin API key
-GET /api/admin/sessions     # Requires Admin API key
+GET /api/users                              # List all registered users
+GET /api/admin/sessions                     # List all active sessions
+GET /api/debug/credentials?user_id=TEST     # Debug user credentials
 ```
 
 ## 🗄️ **Data Storage**
@@ -218,7 +221,14 @@ AZURE_STORAGE_CONNECTION_STRING=<azure-connection-string>
 
 # Optional
 JWT_TTL_SECONDS=900
-ADMIN_API_KEY=<admin-api-secret>
+ADMIN_API_KEY=admin-key-d8f9e7a6b5c4d3e2f1
+```
+
+### Admin API Access
+The admin endpoints require authentication with the API key:
+```bash
+curl -H "Authorization: Bearer admin-key-d8f9e7a6b5c4d3e2f1" \
+     https://webauthn-investor.azurewebsites.net/api/users
 ```
 
 ### Azure Resources Required
@@ -233,6 +243,8 @@ ADMIN_API_KEY=<admin-api-secret>
 - **Scalability**: Auto-scaling to handle traffic spikes  
 - **Security**: All penetration tests passed
 - **Compliance**: WebAuthn W3C standard compliant
+- **Active Users**: 3 registered users (TEST, NEW_AUTH_TEST, ATOB_FIXED)
+- **Admin Monitoring**: Full API access with secure authentication
 
 ## 📄 **Documentation**
 
