@@ -143,6 +143,32 @@ This system enables Israeli financial services companies to verify investor iden
 - **No Bypass**: Real WebAuthn cryptographic verification, cannot be faked
 - **Admin Access**: Full monitoring and debug capabilities with secure API
 
+## 🔄 **Refactoring Strategy (Clean Architecture)**
+
+### **Current Status: v2.0.0-stable**
+- **Backup Tag**: `v2.0.0-stable` (rollback point)
+- **Strategy**: Incremental refactoring with continuous testing
+- **Goal**: Clean, modular, maintainable codebase
+
+### **Development Phases**
+1. **Phase 1**: Extract Storage Service (lowest risk)
+2. **Phase 2**: Extract WebAuthn Service + unit tests  
+3. **Phase 3**: Jinja2 template system for Hebrew UI
+4. **Phase 4**: Session and Auth services
+5. **Phase 5**: Comprehensive testing suite
+
+### **Branch Strategy**
+- **Main Branch**: Keep all refactoring on `master` for simplicity
+- **Continuous Deployment**: Each phase tested and deployed before next
+- **Rollback Plan**: `git reset --hard v2.0.0-stable` if issues occur
+
+### **Clean Code Principles**
+- **Single Responsibility**: Each service handles one concern
+- **DRY**: Reusable templates and functions
+- **Testable**: Services can be unit tested independently
+- **Readable**: Clear separation of concerns
+- **Modular**: Easy to add features and fix bugs
+
 ## 🔐 **Security Certification**
 **✅ SYSTEM IS PRODUCTION-SAFE FOR INVESTOR VERIFICATION**
 

@@ -45,16 +45,79 @@ def load_credentials():
     return storage_service.load_credentials()
 
 def save_credentials(data):
-    """Save credentials - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.save_credentials(data)
+    """Save credentials to Azure Table Storage only"""
+    if not table_service_client:
+        logging.error("Azure Table Storage not initialized - cannot save credentials")
+        raise Exception("Storage unavailable - Azure Table Storage required for production")
+    
+    try:
+        table_client = table_service_client.get_table_client(TABLE_CREDENTIALS)
+        for user_id, cred_data in data.items():
+            entity = {
+                'PartitionKey': 'credentials',
+                'RowKey': user_id,
+                'credential_id': cred_data.get('credential_id', ''),
+                'public_key': cred_data.get('public_key', '')
+            }
+            table_client.upsert_entity(entity)
+        logging.info(f"Credentials saved successfully for {len(data)} users")
+    except Exception as e:
+        logging.error(f"Error saving credentials to Azure Table Storage: {str(e)}")
+        raise
 
 def load_sessions():
-    """Load sessions - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.load_sessions()
+    """Load sessions from Azure Table Storage only"""
+    if not table_service_client:
+        logging.error("Azure Table Storage not initialized - sessions unavailable")
+        return {}
+    
+    try:
+        table_client = table_service_client.get_table_client(TABLE_SESSIONS)
+        entities = table_client.list_entities()
+        data = {}
+        for entity in entities:
+            # Convert string timestamp back to datetime
+            expires_at_str = entity.get('expires_at', '')
+            expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
+            
+            data[entity['RowKey']] = {
+                'user_id': entity.get('user_id', ''),
+                'challenge': entity.get('challenge', ''),
+                'verified': entity.get('verified', False),
+                'expires_at': expires_at
+            }
+        return data
+    except Exception as e:
+        logging.error(f"Error loading sessions from Azure Table Storage: {str(e)}")
+        return {}
 
 def save_sessions(data):
-    """Save sessions - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.save_sessions(data)
+    """Save sessions to Azure Table Storage only"""
+    if not table_service_client:
+        logging.error("Azure Table Storage not initialized - cannot save sessions")
+        raise Exception("Storage unavailable - Azure Table Storage required for production")
+    
+    try:
+        table_client = table_service_client.get_table_client(TABLE_SESSIONS)
+        for token, session_data in data.items():
+            # Convert datetime to string for storage
+            expires_at_str = ''
+            if 'expires_at' in session_data and session_data['expires_at']:
+                expires_at_str = session_data['expires_at'].isoformat()
+            
+            entity = {
+                'PartitionKey': 'sessions',
+                'RowKey': token,
+                'user_id': session_data.get('user_id', ''),
+                'challenge': session_data.get('challenge', ''),
+                'verified': session_data.get('verified', False),
+                'expires_at': expires_at_str
+            }
+            table_client.upsert_entity(entity)
+        logging.info(f"Sessions saved successfully: {len(data)} sessions")
+    except Exception as e:
+        logging.error(f"Error saving sessions to Azure Table Storage: {str(e)}")
+        raise
 
 # Load initial data
 credentials_db = load_credentials()
@@ -88,12 +151,22 @@ def verify_jwt_token(token: str) -> Optional[str]:
         return None
 
 def get_user_credentials(user_id: str):
-    """Get user credentials - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.get_user_credentials(user_id)
+    """Get user credentials directly from Azure Table Storage"""
+    credentials_data = load_credentials()
+    user_cred = credentials_data.get(user_id, {})
+    if user_cred:
+        # Convert new dict format to old tuple format for compatibility
+        return [(user_cred.get('credential_id', ''), user_cred.get('public_key', ''), 0)]
+    return []
 
 def save_credential(user_id: str, credential_id: str, public_key: str):
-    """Save credential - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.save_user_credential(user_id, credential_id, public_key)
+    """Save credential directly to Azure Table Storage"""
+    credentials_data = load_credentials()
+    credentials_data[user_id] = {
+        'credential_id': credential_id,
+        'public_key': public_key
+    }
+    save_credentials(credentials_data)
 
 def update_sign_count(credential_id: str, new_sign_count: int):
     """Update sign count for credential (prevents replay attacks)"""
@@ -102,24 +175,39 @@ def update_sign_count(credential_id: str, new_sign_count: int):
     logging.info(f"Sign count update for credential {credential_id}: {new_sign_count}")
 
 def create_session(user_id: str, token: str, challenge: str):
-    """Create session - now uses AzureStorageService (Clean Architecture Phase 1)"""
+    """Create session directly in Azure Table Storage"""
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=JWT_TTL_SECONDS)
-    return storage_service.save_session(token, user_id, challenge, expires_at, verified=False)
+    sessions_data = load_sessions()
+    sessions_data[token] = {
+        "user_id": user_id,
+        "challenge": challenge,
+        "verified": False,
+        "expires_at": expires_at
+    }
+    save_sessions(sessions_data)
 
 def get_session_data(token: str):
-    """Get session data - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    session = storage_service.get_session_data(token)
+    """Get session data directly from Azure Table Storage"""
+    sessions_data = load_sessions()
+    session = sessions_data.get(token)
     if session:
         return (session["user_id"], session["challenge"], session["verified"], session["expires_at"].isoformat())
     return None
 
 def mark_session_verified(token: str):
-    """Mark session as verified - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.mark_session_verified(token)
+    """Mark session as verified in Azure Table Storage"""
+    sessions_data = load_sessions()
+    if token in sessions_data:
+        sessions_data[token]["verified"] = True
+        save_sessions(sessions_data)
 
 def get_session(token: str):
-    """Get session object - now uses AzureStorageService (Clean Architecture Phase 1)"""
-    return storage_service.get_session_data(token)
+    """Get session object from Azure Table Storage"""
+    sessions_data = load_sessions()
+    session = sessions_data.get(token)
+    if session and session['expires_at'] > datetime.now(timezone.utc):
+        return session
+    return None
 
 def verify_admin_auth(req: func.HttpRequest) -> bool:
     """SECURITY FIX: Verify admin API key authentication"""
